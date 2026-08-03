@@ -1,0 +1,5 @@
+127.0.0.1       localhost
+::1             ip6-localhost
+# Null-route the defunct DumbDown/offline-dc bundle-flags backend so
+# DeviceRegistrar.refreshBundleFlags can never re-lock the entitlement flags.
+127.0.0.1       offline-dc-backend-ba4815b2bcc8.herokuapp.com
