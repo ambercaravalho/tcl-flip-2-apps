@@ -2,3 +2,6 @@
 # The tracked bootanimation.zip lives under magisk/bootanim/system/ and is not at
 # the repo root, so this only ignores build artifacts.
 /*.zip
+
+# jadx output - regenerate locally from apks/, not tracked.
+/decomp/

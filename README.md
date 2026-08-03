@@ -1,164 +1,61 @@
 # tcl-flip-2-apps
 
-A reverse-engineering study of **DumbDown Launcher** (`com.offlineinc.dumbdownlauncher`), a
-locked-down home-screen launcher shipped on the TCL Flip 2 (model `4058G`, Android 11 /
-SDK 30), together with its two companion apps.
+Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules. Also keeps a copy of
+the phone's stock offlineinc apps so they can be reinstalled if you remove or break one.
 
-Several of the launcher's features are backend-driven and talk to
-`offline-dc-backend-ba4815b2bcc8.herokuapp.com`, which is no longer online. With the server
-gone, those features fail permanently on-device. This repository documents how the launcher
-works and provides Magisk modules that restore the affected behavior without modifying app
-code. It is not a full-device backup — only the three offlineinc apps and their analysis are
-included. The device is rooted with Magisk.
+## The phone
 
-## Layout
+The TCL Flip 2 (model `4058G`) and the TCL Flip Go are cheap flip phones with a 240x320 screen.
+They look like feature phones but run Android 11 (SDK 30), and the home screen is **DumbDown
+Launcher** (`com.offlineinc.dumbdownlauncher`) — a locked-down launcher that only shows the apps
+your plan is supposed to include. Two companion apps ship with it: DumbTT9
+(`com.offlineinc.dumbtt9`, the T9 keyboard) and Voice to Text (`com.offlineinc.voicetotext`).
+
+The launcher checks a vendor backend (`offline-dc-backend-ba4815b2bcc8.herokuapp.com`) to find
+out which plan the phone is on. **That server is gone**, so on a stock device two things break
+permanently and there is no way to fix them from the UI:
+
+- Tapping most app tiles shows **"This feature isn't on your plan."**
+- Boot can hang on an activation screen — "waiting for ur sim…", "activating ur phone…" — that
+  always ends in **"sorry, we couldn't connect to the network."**
+
+The two modules below fix exactly those two things. Both need root (Magisk).
 
 | Path | What it is |
 | --- | --- |
-| `apks/` | The three offlineinc APKs pulled off the device. |
-| `decomp/` | jadx output for `com.offlineinc.dumbdownlauncher` — the reference for the findings below. |
-| `magisk/launcher/` | Magisk module that re-enables the plan gate and the boot SIM-check without touching app code. |
-| `magisk/bootanim/` | Magisk module that swaps in the offlineinc boot animation shipped in the APK. |
+| `magisk/launcher/` | Unlocks the app tiles and skips the failing activation screen. |
+| `magisk/bootanim/` | Swaps the stock TCL boot animation for the offlineinc one. |
+| `apks/` | The three stock offlineinc APKs pulled off the device. |
 
-### The apps
+Reinstall a stock app with `adb install apks/com.offlineinc.dumbdownlauncher.apk` (each package
+is a single APK, so no split-APK tooling is needed).
 
-| Package | App | Notes |
-| --- | --- | --- |
-| `com.offlineinc.dumbdownlauncher` | DumbDown Launcher | The `HOME` launcher; runs an accessibility service that polices other apps. |
-| `com.offlineinc.dumbtt9` | DumbTT9 | T9 keyboard companion. |
-| `com.offlineinc.voicetotext` | Voice to Text | Dictation companion. |
+## Launcher module: `magisk/launcher/`
 
-## The "This feature isn't on your plan" gate
+Nothing is patched inside the APK. The launcher already knows how to be "unlocked and
+activated" — it writes those values itself when pairing succeeds, or when you tap *skip pairing*
+/ *skip setup*. This module just writes them for you, since the server that would normally do it
+is dead.
 
-DumbDown Launcher decides which app tiles you can open based on three booleans stored in its
-`device_pairing` SharedPreferences. Those booleans were fetched from a backend that paired
-each device to a subscription plan. That backend
-(`offline-dc-backend-ba4815b2bcc8.herokuapp.com`) is gone, so the flags never get set to
-their "paid" values and paid tiles show "This feature isn't on your plan."
+At every boot, [`service.sh`](magisk/launcher/service.sh) waits for the phone to be unlocked
+(the launcher's settings aren't readable before that), then sets six switches in its
+SharedPreferences:
 
-### Where the decision is made
+- `has_subscription=true`, `hide_smart_txt=false`, `hide_audio_bundle=false` — every tile
+  becomes openable.
+- `is_paired=true`, `device_registered=true`, `setup_skipped=true` — the launcher considers
+  activation done, so it boots straight to the home grid instead of the SIM-check screen.
 
-[`decomp/.../za/i0.java`](decomp/com.offlineinc.dumbdownlauncher/sources/za/i0.java) computes a
-`subscriptionLocked` flag for every tile, grouping packages into three bundles:
+If anything changed, it force-stops the launcher so it reloads the new values. It only edits
+files that already exist and only rewrites when the contents actually differ, so repeated boots
+are harmless.
 
-- **essentials** (`f11539a`): `com.whatsapp`, `com.ubercab.uberlite`,
-  `org.thoughtcrime.securesms`, `com.azure.authenticator`, plus built-ins `__CONTACT_SYNC__`,
-  `__DUMB_MAP__`, `__QUACK__`, `__SNAKE__`, `__WEATHER__`.
-- **audio** (`f11540b`): `com.spotify.music`, `com.apple.android.music`,
-  `de.danoeh.antennapod`, `__DUMB_PODCAST__`.
-- **smart text** (`f11541c`): `com.openbubbles.messaging`, `__GOOGLE_MESSAGES__`.
+The second half is [`system/etc/hosts`](magisk/launcher/system/etc/hosts), which points the dead
+backend at `127.0.0.1`. The launcher keeps retrying that server in the background, and when the
+request fails outright it takes an error path that leaves the existing settings untouched. That
+guarantees nothing can ever re-lock your tiles, even if the host comes back one day.
 
-A tile is locked unless one of these holds:
-
-```32:34:decomp/com.offlineinc.dumbdownlauncher/sources/za/i0.java
-            if (sharedPreferences.getBoolean("has_subscription", true) || (!f11539a.contains(packageName) && ((sharedPreferences.getBoolean("hide_audio_bundle", false) || !f11540b.contains(packageName)) && (sharedPreferences.getBoolean("hide_smart_txt", false) || !f11541c.contains(packageName))))) {
-                z3 = false;
-            }
-```
-
-In plain terms, a tile stays **unlocked** when `has_subscription == true` (unlocks
-everything), or the package is in no bundle, or it is in the audio/smart-text bundle but the
-matching `hide_*` flag is `true`. The `hide_*` flags are inverted: when a bundle is *removed*
-from a plan the app sets its `hide_*` flag `true`, so those tiles fall through to "not gated"
-rather than "locked." The clean unlock is therefore `has_subscription=true` with both
-`hide_*` flags `false`.
-
-### Where the flags come from
-
-[`decomp/.../cc/b.java`](decomp/com.offlineinc.dumbdownlauncher/sources/cc/b.java)
-(`DeviceRegistrar`) resolves the SIM's phone number, registers the device, then calls
-`refreshBundleFlags`, which reads the plan from the backend
-([`decomp/.../zb/b.java`](decomp/com.offlineinc.dumbdownlauncher/sources/zb/b.java)) and writes
-the three flags. Two failure modes matter:
-
-- **404 (phone not found):** it defaults to the *unlocked* values
-  (`hasSubscription=true`, both `hide_*` false).
-- **Any other error (network/DNS failure):** it returns early and leaves the existing flags
-  untouched — the "skipped" branch.
-
-```243:246:decomp/com.offlineinc.dumbdownlauncher/sources/cc/b.java
-        } catch (Exception e10) {
-            Log.w("DeviceRegistrar", "refreshBundleFlags: skipped (" + e10.getMessage() + ")");
-            return;
-        }
-```
-
-That "skipped" branch is what makes a fix durable: if the backend host can't be reached at
-all, the refresh throws and any previously written values survive.
-
-## The boot SIM-check / activation loop
-
-On every boot (or launcher restart) the phone can show an activation screen that steps through
-"waiting for ur sim..." → "finishing sim registration..." → "activating ur phone..." →
-"checking bundle...", then fails with "sorry, we couldn't connect to the network." Like the
-plan gate, this is backend-driven and can never succeed now.
-
-### How it is chosen and what runs
-
-[`MainActivity`](decomp/com.offlineinc.dumbdownlauncher/sources/com/offlineinc/dumbdownlauncher/MainActivity.java)
-picks an onboarding "step" on launch. The activation screen is the `"boot_registration"` step,
-selected from `device_pairing` flags and only when `launcher_prefs.setup_skipped` is false:
-
-```380:383:decomp/com.offlineinc.dumbdownlauncher/sources/com/offlineinc/dumbdownlauncher/MainActivity.java
-        if (!getSharedPreferences("launcher_prefs", r13).getBoolean("setup_skipped", r13)) {
-            if (z13 || z14) {
-                i11 = 0;
-                str3 = "boot_registration";
-```
-
-where `z13`/`z14` reduce to "not paired and not registered." The screen itself
-([`jd/a.java`](decomp/com.offlineinc.dumbdownlauncher/sources/jd/a.java), state enum
-[`hc/q.java`](decomp/com.offlineinc.dumbdownlauncher/sources/hc/q.java)) drives a coroutine
-([`d1/w2.java`](decomp/com.offlineinc.dumbdownlauncher/sources/d1/w2.java)) that calls
-`hc.m` → [`cc.b.h(...)`](decomp/com.offlineinc.dumbdownlauncher/sources/cc/b.java) — an HTTP
-`register` to the same dead backend. On failure it lands in `REG_ERROR`.
-
-### The unlocked state the app itself writes
-
-The app already has "skip" paths that write the exact flags needed:
-
-- Skip pairing → `device_pairing.is_paired=true`
-  ([`za/p.java`](decomp/com.offlineinc.dumbdownlauncher/sources/za/p.java) case 7).
-- Skip setup → `launcher_prefs.setup_skipped=true` (`za/p.java` case 4).
-- A real success → `device_pairing.device_registered=true`
-  ([`za/o.java`](decomp/com.offlineinc.dumbdownlauncher/sources/za/o.java)).
-
-Setting `is_paired=true` + `device_registered=true` makes `z13`/`z14` false so
-`"boot_registration"` is never selected, and `setup_skipped=true` short-circuits the whole
-onboarding gate to the home grid.
-
-## Magisk module: `magisk/launcher/`
-
-Rather than patch the APK, the [module](magisk/launcher/service.sh) writes the app's own
-"unlocked / activated" values into its SharedPreferences at boot and null-routes the backend so
-a refresh can never overwrite them. It fixes both features above:
-
-- **Plan gate** — in `device_pairing.xml`: `has_subscription=true`, `hide_smart_txt=false`,
-  `hide_audio_bundle=false`.
-- **Boot activation** — in `device_pairing.xml`: `is_paired=true`, `device_registered=true`;
-  in `launcher_prefs.xml`: `setup_skipped=true`.
-
-```mermaid
-flowchart TD
-  boot["Boot (Magisk late_start)"] --> svc["service.sh set_bool on device_pairing.xml + launcher_prefs.xml"]
-  svc --> plan["has_subscription=true, hide_smart_txt=false, hide_audio_bundle=false"]
-  svc --> act["is_paired=true, device_registered=true, setup_skipped=true"]
-  svc --> stop["am force-stop launcher (only if changed)"]
-  stop --> reload["Launcher reloads prefs"]
-  plan --> gate["za.i0.a: subscriptionLocked=false for every tile"]
-  act --> skip["MainActivity skips boot_registration -> home grid"]
-  backend["offline-dc Heroku backend"] -->|null-routed via system/etc/hosts| refresh["refreshBundleFlags / register"]
-  refresh -.->|"throws, hits skipped branch"| plan
-```
-
-`set_bool` replaces an existing `<boolean>` or inserts one before `</map>`, only rewrites when
-the content actually changes (preserving the file's inode/owner/mode/SELinux context), and only
-touches prefs files that already exist. Why each piece is needed:
-
-- **Writing the flags** unlocks tiles and marks activation done immediately, without any server.
-- **Force-stopping the launcher** clears its in-memory caches so the new flags take effect.
-- **Null-routing the host** ([systemless hosts](magisk/launcher/system/etc/hosts)) forces the
-  backend calls into their "skipped" branch instead of ever fetching real data.
+A log of what the module did each boot lands in `/data/local/tmp/dumbdown_plan_unlock.log`.
 
 ### Install
 
@@ -169,25 +66,25 @@ adb shell su -c 'magisk --install-module /data/local/tmp/launcher-module.zip'
 adb reboot
 ```
 
-If Magisk only extracts `module.prop` (it has on this device), copy `service.sh` and
-`system/etc/hosts` into `/data/adb/modules/dumbdown_plan_unlock/` manually and
+If Magisk only extracts `module.prop` (it has done this on this device), copy `service.sh` and
+`system/etc/hosts` into `/data/adb/modules/dumbdown_plan_unlock/` by hand and
 `chmod 0644 service.sh`.
 
 ### Revert
 
-Remove the module in the Magisk app (or delete `/data/adb/modules/dumbdown_plan_unlock`) and
-reboot. The launcher's own flags stay as last written; delete `device_pairing.xml` if you
-want a clean slate.
+Remove the module in the Magisk app, or delete `/data/adb/modules/dumbdown_plan_unlock`, then
+reboot. The launcher keeps whatever settings were last written; delete
+`/data/data/com.offlineinc.dumbdownlauncher/shared_prefs/device_pairing.xml` for a clean slate.
 
-## Boot animation: `magisk/bootanim/`
+## Boot animation module: `magisk/bootanim/`
 
-The launcher APK ships a boot animation in its assets
-([`decomp/.../assets/bootanimation.zip`](decomp/com.offlineinc.dumbdownlauncher/resources/assets/bootanimation.zip))
-— a valid 240x320, 12fps, `Stored`-compressed animation that exactly matches this phone's
-panel. The stock TCL animation lives at `/product/media/bootanimation.zip`, so this module
-overlays it systemlessly by shipping the file at `system/product/media/bootanimation.zip`
-(Magisk maps `system/product` to the real `/product`). Removing the module restores the stock
+The launcher APK ships an offlineinc boot animation in its assets that the phone never plays —
+240x320 at 12fps, which is an exact match for this panel. This module makes it the real boot
 animation.
+
+The stock file lives at `/product/media/bootanimation.zip`. The module ships its replacement at
+`system/product/media/bootanimation.zip`; Magisk maps `system/product` onto the real `/product`,
+so the original file is never overwritten and removing the module brings it straight back.
 
 ### Install
 
@@ -196,19 +93,4 @@ cd magisk/bootanim && zip -r ../../bootanim-module.zip . && cd ../..
 adb push bootanim-module.zip /data/local/tmp/
 adb shell su -c 'magisk --install-module /data/local/tmp/bootanim-module.zip'
 adb reboot
-```
-
-## Cloning
-
-The APKs are committed as ordinary Git objects (no Git LFS), so a plain clone fetches the real
-files:
-
-```bash
-git clone https://github.com/ambercaravalho/tcl-flip-2-apps.git
-```
-
-All three offlineinc packages are single-APK, so a normal install restores any of them:
-
-```bash
-adb install apks/com.offlineinc.dumbdownlauncher/base.apk
 ```
