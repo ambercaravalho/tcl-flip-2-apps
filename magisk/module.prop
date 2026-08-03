@@ -1,6 +1,0 @@
-id=dumbdown_plan_unlock
-name=DumbDown Plan Unlock
-version=v1.0.0
-versionCode=1
-author=amber
-description=Re-enables the DumbDown Launcher's plan-gated features by setting has_subscription=true (and hide_smart_txt/hide_audio_bundle=false) in the app's device_pairing prefs at boot, and null-routes the defunct bundle-flags backend so the flags can't be re-locked. No app code is modified.
