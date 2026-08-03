@@ -1,19 +1,21 @@
 # tcl-flip-2-apps
 
-Notes, APKs, and tooling from reverse-engineering and re-customizing my TCL Flip 2
-(model `4058G`, Android 11 / SDK 30, rooted with Magisk).
+A reverse-engineering study of **DumbDown Launcher** (`com.offlineinc.dumbdownlauncher`), a
+locked-down home-screen launcher shipped on the TCL Flip 2 (model `4058G`, Android 11 /
+SDK 30), together with its two companion apps.
 
-The phone runs a locked-down home screen from a shuttered business, **DumbDown Launcher**
-(`com.offlineinc.dumbdownlauncher`), plus two companion apps I also built. This repo is
-where I figure out how that launcher works and undo the parts that depend on a backend
-that no longer exists. It is not a full-device backup; only the three offlineinc apps and
-their analysis live here.
+Several of the launcher's features are backend-driven and talk to
+`offline-dc-backend-ba4815b2bcc8.herokuapp.com`, which is no longer online. With the server
+gone, those features fail permanently on-device. This repository documents how the launcher
+works and provides Magisk modules that restore the affected behavior without modifying app
+code. It is not a full-device backup — only the three offlineinc apps and their analysis are
+included. The device is rooted with Magisk.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `apks/` | The three offlineinc APKs pulled off the device (Git LFS). |
+| `apks/` | The three offlineinc APKs pulled off the device. |
 | `decomp/` | jadx output for `com.offlineinc.dumbdownlauncher` — the reference for the findings below. |
 | `magisk/launcher/` | Magisk module that re-enables the plan gate and the boot SIM-check without touching app code. |
 | `magisk/bootanim/` | Magisk module that swaps in the offlineinc boot animation shipped in the APK. |
@@ -82,7 +84,7 @@ the three flags. Two failure modes matter:
 ```
 
 That "skipped" branch is what makes a fix durable: if the backend host can't be reached at
-all, the refresh throws and any values we wrote survive.
+all, the refresh throws and any previously written values survive.
 
 ## The boot SIM-check / activation loop
 
@@ -113,7 +115,7 @@ where `z13`/`z14` reduce to "not paired and not registered." The screen itself
 
 ### The unlocked state the app itself writes
 
-The app already has "skip" paths that write the exact flags we need:
+The app already has "skip" paths that write the exact flags needed:
 
 - Skip pairing → `device_pairing.is_paired=true`
   ([`za/p.java`](decomp/com.offlineinc.dumbdownlauncher/sources/za/p.java) case 7).
@@ -198,16 +200,14 @@ adb reboot
 
 ## Cloning
 
-The APKs are stored with [Git LFS](https://git-lfs.com). Install it before cloning, or you
-will get small text pointer files instead of real APKs:
+The APKs are committed as ordinary Git objects (no Git LFS), so a plain clone fetches the real
+files:
 
 ```bash
-brew install git-lfs && git lfs install
 git clone https://github.com/ambercaravalho/tcl-flip-2-apps.git
 ```
 
-Already cloned without it? Run `git lfs pull` to fetch the real files. All three offlineinc
-packages are single-APK, so a normal install restores any of them:
+All three offlineinc packages are single-APK, so a normal install restores any of them:
 
 ```bash
 adb install apks/com.offlineinc.dumbdownlauncher/base.apk
