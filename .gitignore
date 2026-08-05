@@ -5,3 +5,13 @@
 
 # jadx output - regenerate locally from apks/, not tracked.
 /decomp/
+
+# microG setup: keep the scripts under microg/, but never the downloadable
+# artifacts (GmsCore/Companion APKs, LSPosed/FakeGApps, module zips). Grab those
+# from the official GitHub releases listed in the README.
+/microg/*.apk
+/microg/*.apk.asc
+/microg/*.zip
+
+# Scratch dir used while pulling files off the device / staging downloads.
+/work/
