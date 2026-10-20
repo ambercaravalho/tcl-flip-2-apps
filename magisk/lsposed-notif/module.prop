@@ -1,0 +1,6 @@
+id=lsposed_notif_off
+name=LSPosed Status Notification Off
+version=v1.0.0
+versionCode=1
+author=amber
+description=Disables the persistent "LSPosed loaded" status notification by writing LSPosed's own enable_status_notification=false preference into /data/adb/lspd/config/modules_config.db at boot. This is the value the manager's greyed-out "Status Notification" toggle would set (the parasitic manager can't create the launcher shortcut it wants first). Uses a small static ARM sqlite writer built from the official SQLite amalgamation. Leaves the scope-request and module-update notifications intact; idempotent and reversible.

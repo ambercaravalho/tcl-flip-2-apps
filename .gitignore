@@ -15,3 +15,6 @@
 
 # Scratch dir used while pulling files off the device / staging downloads.
 /work/
+
+# macOS Finder metadata.
+.DS_Store

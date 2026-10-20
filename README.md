@@ -1,15 +1,16 @@
 # tcl-flip-2-apps
 
-Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules. Also keeps a copy of
+Fixes for the TCL Flip 2 / TCL Flip Go, packaged as three Magisk modules. Also keeps a copy of
 the phone's stock offlineinc apps so they can be reinstalled if you remove or break one, and
 notes on getting microG onto the phone, which needs no code from this repo but is fiddly enough
 to be worth writing down.
 
-| Path               | What it is                                                     |
-| ------------------ | -------------------------------------------------------------- |
-| `magisk/launcher/` | Unlocks the app tiles and skips the failing activation screen. |
-| `magisk/bootanim/` | Swaps the stock TCL boot animation for the offlineinc one.     |
-| `apks/`            | The three stock offlineinc APKs pulled off the device.         |
+| Path                    | What it is                                                          |
+| ----------------------- | ------------------------------------------------------------------- |
+| `magisk/launcher/`      | Unlocks the app tiles and skips the failing activation screen.      |
+| `magisk/bootanim/`      | Swaps the stock TCL boot animation for the offlineinc one.          |
+| `magisk/lsposed-notif/` | Silences LSPosed's persistent "LSPosed loaded" status notification. |
+| `apks/`                 | The three stock offlineinc APKs pulled off the device.              |
 
 <details>
 <summary><b>The phone</b></summary>
@@ -91,6 +92,74 @@ adb push bootanim-module.zip /data/local/tmp/
 adb shell su -c 'magisk --install-module /data/local/tmp/bootanim-module.zip'
 adb reboot
 ```
+
+### LSPosed status notification module: `magisk/lsposed-notif/`
+
+Once LSPosed is installed (see microG support below) it posts a permanent, unswipeable
+**LSPosed loaded** notification. It's meant as the entry point to the parasitic manager, but on
+this phone the manager is already a real app, so the notification is pure noise. The manager has
+a *Status Notification* toggle to turn it off — except it's greyed out until you first create a
+launcher shortcut, and DumbDown Launcher (`com.flipos.launcher`) can't pin shortcuts, so you're
+stuck.
+
+Fighting it at the Android layer is a dead end: the notification lives on the `lsposed_status`
+channel owned by the `android` package, which this ROM marks non-blockable (so its Settings
+toggle is greyed too), and LSPosed re-asserts the channel at `IMPORTANCE_MIN` on every boot —
+overriding even a user-locked `IMPORTANCE_NONE`.
+
+The toggle just writes one value, though. LSPosed keeps its framework prefs in the SQLite DB
+`/data/adb/lspd/config/modules_config.db`, and reads `enable_status_notification` at
+`BOOT_COMPLETED` (`LSPosedService.dispatchBootCompleted`): when it's `false` it *cancels* the
+notification instead of posting it. So this module just sets that value. At `post-fs-data` (before
+`system_server` starts, so the DB is not open by anyone)
+[`post-fs-data.sh`](magisk/lsposed-notif/post-fs-data.sh) runs a small helper that writes the row
+`('lspd', 0, 'config', 'enable_status_notification', <Boolean.FALSE>)`. The value is a serialized
+`java.lang.Boolean` (LSPosed stores config via Java `ObjectOutputStream`), so the helper writes
+the exact bytes `writeObject(Boolean.FALSE)` produces. It's idempotent, and re-applies the setting
+if LSPosed is ever reinstalled or its config reset. The scope-request and module-update
+notifications are left alone.
+
+There is no `sqlite3` on the device and no way to hand-edit a SQLite b-tree safely, so the writer
+is a tiny native binary, [`lspd_status_notif`](magisk/lsposed-notif/lspd_status_notif), built from
+[`src/lspd_status_notif.c`](magisk/lsposed-notif/src/lspd_status_notif.c) linked against the
+official SQLite amalgamation. It's a fully static `armeabi-v7a` musl build, which runs on Android
+via the kernel syscall ABI without needing bionic. Rebuild it with [zig](https://ziglang.org)
+(no Android NDK required):
+
+```bash
+curl -sO https://www.sqlite.org/2024/sqlite-amalgamation-3470200.zip
+unzip -q sqlite-amalgamation-3470200.zip
+zig cc -target arm-linux-musleabihf -O2 -static -s \
+  -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_DQS=0 \
+  -I sqlite-amalgamation-3470200 \
+  magisk/lsposed-notif/src/lspd_status_notif.c sqlite-amalgamation-3470200/sqlite3.c \
+  -o magisk/lsposed-notif/lspd_status_notif
+```
+
+The binary takes an optional argument: `lspd_status_notif 0` disables the notification (default),
+`lspd_status_notif 1` re-enables it, and an optional second argument overrides the DB path.
+
+#### Install
+
+```bash
+cd magisk/lsposed-notif && zip -r ../../lsposed-notif-module.zip . && cd ../..
+adb push lsposed-notif-module.zip /data/local/tmp/
+adb shell su -c 'magisk --install-module /data/local/tmp/lsposed-notif-module.zip'
+adb reboot
+```
+
+Like the launcher module, Magisk on this device sometimes stages only `module.prop` on the first
+`--install-module` and finalizes the rest on reboot; if the module folder under
+`/data/adb/modules/lsposed_notif_off/` is missing `post-fs-data.sh` or `lspd_status_notif` after
+that, copy them in by hand and `chmod 0755 lspd_status_notif`. A log of each boot's result lands in
+`/data/local/tmp/lsposed_notif_off.log`.
+
+#### Revert
+
+Remove the module in the Magisk app (or delete `/data/adb/modules/lsposed_notif_off` and reboot).
+The `enable_status_notification=false` value stays in LSPosed's config after removal, so to bring
+the notification back either run `lspd_status_notif 1` once or toggle *Status Notification* back on
+in the manager.
 
 </details>
 
