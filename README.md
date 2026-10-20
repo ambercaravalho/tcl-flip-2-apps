@@ -1,6 +1,6 @@
 # tcl-flip-2-apps
 
-Fixes for the TCL Flip 2 / TCL Flip Go, packaged as three Magisk modules. Also keeps a copy of
+Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules. Also keeps a copy of
 the phone's stock offlineinc apps so they can be reinstalled if you remove or break one, and
 notes on getting microG onto the phone, which needs no code from this repo but is fiddly enough
 to be worth writing down.
@@ -8,7 +8,6 @@ to be worth writing down.
 | Path                    | What it is                                                          |
 | ----------------------- | ------------------------------------------------------------------- |
 | `magisk/launcher/`      | Unlocks the app tiles and skips the failing activation screen.      |
-| `magisk/bootanim/`      | Swaps the stock TCL boot animation for the offlineinc one.          |
 | `magisk/lsposed-notif/` | Silences LSPosed's persistent "LSPosed loaded" status notification. |
 | `apks/`                 | The three stock offlineinc APKs pulled off the device.              |
 
@@ -73,25 +72,6 @@ If Magisk only extracts `module.prop` (it has done this on this device), copy `s
 Remove the module in the Magisk app, or delete `/data/adb/modules/dumbdown_plan_unlock`, then
 reboot. The launcher keeps whatever settings were last written; delete
 `/data/data/com.offlineinc.dumbdownlauncher/shared_prefs/device_pairing.xml` for a clean slate.
-
-### Boot animation module: `magisk/bootanim/`
-
-The launcher APK ships an offlineinc boot animation in its assets that the phone never plays —
-240x320 at 12fps, which is an exact match for this panel. This module makes it the real boot
-animation.
-
-The stock file lives at `/product/media/bootanimation.zip`. The module ships its replacement at
-`system/product/media/bootanimation.zip`; Magisk maps `system/product` onto the real `/product`,
-so the original file is never overwritten and removing the module brings it straight back.
-
-#### Install
-
-```bash
-cd magisk/bootanim && zip -r ../../bootanim-module.zip . && cd ../..
-adb push bootanim-module.zip /data/local/tmp/
-adb shell su -c 'magisk --install-module /data/local/tmp/bootanim-module.zip'
-adb reboot
-```
 
 ### LSPosed status notification module: `magisk/lsposed-notif/`
 
@@ -214,7 +194,7 @@ adb reboot
 ```
 
 The module copies both APKs to `system/product/priv-app/`, which Magisk maps onto the real
-`/product` exactly like the boot animation module does, and adds the supporting files microG
+`/product` without touching the original partition, and adds the supporting files microG
 needs as a privileged app: `privapp-permissions-*.xml` allowlists, GsfProxy for old apps that
 still ask for `com.google.android.gsf`, Maps v1, and a sysconfig file exempting microG from
 power-save so push survives Doze.

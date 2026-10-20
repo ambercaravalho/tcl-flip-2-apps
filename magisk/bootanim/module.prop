@@ -1,6 +1,0 @@
-id=dumbdown_bootanim
-name=DumbDown Boot Animation
-version=v1.0.0
-versionCode=1
-author=amber
-description=Replaces the stock TCL boot animation with the offlineinc/DumbDown one shipped inside the launcher APK (240x320, 12fps). Installs systemlessly to /product/media/bootanimation.zip via system/product, so the stock file is untouched and removing the module restores it.
