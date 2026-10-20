@@ -8,6 +8,9 @@
 #
 #   1. Plan/subscription gate (za.i0) - device_pairing:
 #        has_subscription=true, hide_smart_txt=false, hide_audio_bundle=false
+#      (hide_smart_txt=true instead while the companion DumbDown Hide Smart Txt
+#      module, dumbdown_hide_smart_txt, is active - that module then defers to
+#      this script so only one of them rewrites device_pairing.xml per boot)
 #   2. Boot SIM-check / activation (MainActivity onboarding "boot_registration"
 #      step) - device_pairing: is_paired=true, device_registered=true
 #      and launcher_prefs: setup_skipped=true
@@ -27,6 +30,12 @@ LOG=/data/local/tmp/dumbdown_plan_unlock.log
 CHANGED=0
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null; }
+
+# module_active <id> - installed, and not disabled or pending removal.
+module_active() {
+    d=/data/adb/modules/$1
+    [ -d "$d" ] && [ ! -f "$d/disable" ] && [ ! -f "$d/remove" ]
+}
 
 # set_bool <prefs-file> <key> <value>
 # Replaces an existing <boolean name="key" .../> or inserts one before </map>.
@@ -81,7 +90,12 @@ fi
 
 # 2. Plan/subscription gate.
 set_bool "$PAIRING" has_subscription true
-set_bool "$PAIRING" hide_smart_txt false
+if module_active dumbdown_hide_smart_txt; then
+    SMART_TXT=true
+else
+    SMART_TXT=false
+fi
+set_bool "$PAIRING" hide_smart_txt "$SMART_TXT"
 set_bool "$PAIRING" hide_audio_bundle false
 
 # 3. Boot SIM-check / activation: mark the device paired + registered, and flag

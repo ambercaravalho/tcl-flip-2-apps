@@ -1,15 +1,17 @@
 # tcl-flip-2-apps
 
-Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules. Also keeps a copy of
-the phone's stock offlineinc apps so they can be reinstalled if you remove or break one, and
-notes on getting microG onto the phone, which needs no code from this repo but is fiddly enough
-to be worth writing down.
+Fixes for the TCL Flip 2 / TCL Flip Go, packaged as three Magisk modules and one LSPosed module.
+Also keeps a copy of the phone's stock offlineinc apps so they can be reinstalled if you remove or
+break one, and notes on getting microG onto the phone, which needs no code from this repo but is
+fiddly enough to be worth writing down.
 
-| Path                    | What it is                                                          |
-| ----------------------- | ------------------------------------------------------------------- |
-| `magisk/launcher/`      | Unlocks the app tiles and skips the failing activation screen.      |
-| `magisk/lsposed-notif/` | Silences LSPosed's persistent "LSPosed loaded" status notification. |
-| `apks/`                 | The three stock offlineinc APKs pulled off the device.              |
+| Path                     | What it is                                                          |
+| ------------------------ | ------------------------------------------------------------------- |
+| `magisk/launcher/`       | Unlocks the app tiles and skips the failing activation screen.      |
+| `magisk/hide-smart-txt/` | Hides the smart txt (OpenBubbles) and contact sync tiles.           |
+| `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
+| `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
+| `apks/`                  | The three stock offlineinc APKs pulled off the device.              |
 
 <details>
 <summary><b>The phone</b></summary>
@@ -39,7 +41,8 @@ At every boot, `[service.sh](magisk/launcher/service.sh)` waits for the phone to
 SharedPreferences:
 
 - `has_subscription=true`, `hide_smart_txt=false`, `hide_audio_bundle=false` — every tile
-becomes openable.
+becomes openable. `hide_smart_txt` follows the [hide smart txt module](#hide-smart-txt-module-magiskhide-smart-txt)
+instead: while that module is active, this one writes `true`.
 - `is_paired=true`, `device_registered=true`, `setup_skipped=true` — the launcher considers
 activation done, so it boots straight to the home grid instead of the SIM-check screen.
 
@@ -72,6 +75,48 @@ If Magisk only extracts `module.prop` (it has done this on this device), copy `s
 Remove the module in the Magisk app, or delete `/data/adb/modules/dumbdown_plan_unlock`, then
 reboot. The launcher keeps whatever settings were last written; delete
 `/data/data/com.offlineinc.dumbdownlauncher/shared_prefs/device_pairing.xml` for a clean slate.
+
+### Hide smart txt module: `magisk/hide-smart-txt/`
+
+If you don't use smart txt, this sets the launcher's own `hide_smart_txt=true` switch, the
+value it uses for plans without smart txt. The smart txt tile (OpenBubbles or Google Messages,
+depending on the platform you picked) disappears from the home grid, the contact sync tile
+disappears from the app drawer, and the launcher stops offering the OpenBubbles linking flow.
+
+It's built to sit alongside the launcher module. Magisk runs every module's `service.sh` at the
+same time, and both modules would otherwise rewrite `device_pairing.xml` at once and could undo
+each other's changes. So only one writes per boot:
+
+- With the launcher module active, this module's
+  [`service.sh`](magisk/hide-smart-txt/service.sh) just exits. The launcher module sees this
+  module's folder under `/data/adb/modules/` and writes `hide_smart_txt=true` instead of `false`.
+- On its own, it waits for the prefs file, writes `hide_smart_txt=true`, and force-stops the
+  launcher if anything changed.
+
+A module counts as active if its folder exists and has no `disable` or `remove` file, so
+switching it off in the Magisk app takes effect on the next boot. Each boot's result lands in
+`/data/local/tmp/dumbdown_hide_smart_txt.log` (and in `dumbdown_plan_unlock.log` when the
+launcher module did the write).
+
+#### Install
+
+Needs launcher module v1.2.0 or later if you use both — older versions always write `false`.
+
+```bash
+cd magisk/hide-smart-txt && zip -r ../../hide-smart-txt-module.zip . && cd ../..
+adb push hide-smart-txt-module.zip /data/local/tmp/
+adb shell su -c 'magisk --install-module /data/local/tmp/hide-smart-txt-module.zip'
+adb reboot
+```
+
+As with the launcher module, if only `module.prop` lands in
+`/data/adb/modules/dumbdown_hide_smart_txt/`, copy `service.sh` in by hand.
+
+#### Revert
+
+Remove the module in the Magisk app and reboot. With the launcher module installed, it writes
+`hide_smart_txt=false` again on that boot and the tiles come back. Without it, the value stays
+`true`; delete `device_pairing.xml` as above, or set the value back by hand.
 
 ### LSPosed status notification module: `magisk/lsposed-notif/`
 
@@ -310,5 +355,117 @@ adb uninstall org.lsposed.manager
 Set `zygisk` back to `0` the same way you set it, if nothing else needs it. Neither module ever
 writes to the real `/system` or `/product`, so pulling them restores the stock partitions
 exactly.
+
+</details>
+
+<details>
+<summary><b>Show and hide launcher apps (LSPosed)</b></summary>
+
+### Unhiding denylisted apps
+
+DumbDown Launcher's app drawer lists every app with a launcher icon, minus a hardcoded set of 28
+package names in `AllAppsActivity` — Magisk, Chrome, the stock dialer and contacts (replaced by
+the launcher's own screens), OpenBubbles, a pile of MediaTek and carrier tools, and the launcher
+itself. The home grid is built from the drawer's list, so an app on that set can't be pinned
+either. Because the list is compiled into the app, no settings change can lift it.
+
+The set is an ordinary Java `Set` that the launcher re-reads every time it rebuilds the drawer,
+though. [`lsposed/unhide-apps/`](lsposed/unhide-apps) is a tiny LSPosed module that runs inside
+the launcher's process at startup and removes entries from it.
+[`UnhideHook.java`](lsposed/unhide-apps/src/com/amber/dumbdownunhide/UnhideHook.java) finds the
+set by content rather than by its obfuscated field name (`z0` in the current build), so a
+launcher update that renames fields doesn't break it. The packages it unhides are the `UNHIDE`
+array at the top of that file: `com.topjohnwu.magisk`, `com.android.chrome` and
+`org.chromium.chrome`. Add more there and rebuild.
+
+### Hiding tiles
+
+Going the other way, adding entries to that set only works for real installed apps. Most of the
+launcher's tiles are virtual — built-in screens with IDs like `__QUACK__` that it appends to the
+list *after* the denylist has been applied. So the module hides tiles one step later instead.
+Every tile list the launcher builds (the drawer, and the default home grid) ends with the same
+subscription-lock pass, `bc.g1.a`, and the hook drops hidden tiles from what it returns. One
+background task, `bc.j`, bypasses that: it adds tiles (quack, contact sync) straight into the open
+drawer's on-screen list and into the drawer cache that the home grid reads. So after each run the
+hook removes hidden tiles from both — from the on-screen list in place, since the drawer is
+watching that exact list object.
+
+The hidden tiles are the `HIDE` set in `UnhideHook.java`, matched on each tile's ID:
+
+| Tile          | ID                                                                  |
+| ------------- | ------------------------------------------------------------------- |
+| dumb keys     | `com.offlineinc.dumbtt9` (the DumbTT9 keyboard's settings app)      |
+| 2-factor auth | `__TWO_FACTOR__`                                                    |
+| device setup  | `__DEVICE_SETUP__`                                                  |
+| quack         | `__QUACK__`                                                         |
+| rideshare     | `__DUMB_RIDE__`                                                     |
+| signal        | `__DUMB_SIGNAL__` (the launcher's own client, not Signal's app)     |
+| smart cal     | `__CALENDAR__`                                                      |
+| free up space | `__FREE_UP_SPACE__`                                                 |
+| smart txt     | `com.openbubbles.messaging` or `__GOOGLE_MESSAGES__`, per platform  |
+
+Hiding Dumb Keys only hides its settings tile; the keyboard keeps working. Its settings are still
+reachable with
+`adb shell am start -n com.offlineinc.dumbtt9/io.github.sspanak.tt9.preferences.PreferencesActivity`.
+The smart txt entry overlaps with the [hide smart txt module](#hide-smart-txt-module-magiskhide-smart-txt);
+keep that module anyway if you want the contact sync tile and the OpenBubbles linking flow gone too.
+
+Unlike the denylist, `bc.g1`, `bc.j` and the tile ID field `a` are obfuscated names that can only
+be found by name, so they're tied to the launcher build in `apks/`. A launcher update will
+probably rename them; the module logs it (see Verify) rather than crashing the launcher.
+
+Nothing in the APK on the phone changes, and the module needs LSPosed, set up as in microG
+support above.
+
+### Build
+
+[`build.sh`](lsposed/unhide-apps/build.sh) uses only the Android SDK (build-tools 36.0.0,
+platform android-36) and a JDK 11+. No Gradle. The Xposed API classes it compiles against are
+small stubs in `stubs/` that are never put in the APK, since LSPosed provides the real ones. It
+signs with your `~/.android/debug.keystore`. A prebuilt `dumbdown-unhide.apk` is committed.
+
+```bash
+lsposed/unhide-apps/build.sh
+```
+
+### Install
+
+```bash
+adb install lsposed/unhide-apps/dumbdown-unhide.apk
+adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
+```
+
+In the manager: **Modules → DumbDown App Visibility → Enable module**, with only **DumbDown
+Launcher** ticked in the scope list. Then restart the launcher (a reboot works too):
+
+```bash
+adb shell am force-stop com.offlineinc.dumbdownlauncher
+```
+
+Magisk and Chrome now show in the app drawer and can be added to the home grid, and the hidden
+tiles are gone from both. To update after editing `UNHIDE` or `HIDE`, rebuild, run
+`adb install -r` with the new APK, and force-stop the launcher again — LSPosed keeps the module
+enabled and scoped across updates.
+
+### Verify
+
+```bash
+adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep DumbDownUnhide
+```
+
+You want three lines when the launcher starts, and a fourth once a hidden tile has been filtered:
+
+- `unhid [com.topjohnwu.magisk, ...] in place`
+- `hiding tiles via bc.g1.a`
+- `scrubbing drawer after bc.j.invokeSuspend (1 drawer lists, 1 caches)`
+- `hid tiles [...]` (logged once per launcher start)
+
+Any line containing `not found` means a launcher update moved or renamed what that step looks
+for, so the hook needs updating. The other steps keep working regardless.
+
+### Revert
+
+Disable the module in the LSPosed manager (or `adb uninstall com.amber.dumbdownunhide`) and
+force-stop the launcher again.
 
 </details>

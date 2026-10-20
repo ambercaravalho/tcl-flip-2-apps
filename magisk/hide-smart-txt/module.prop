@@ -1,0 +1,6 @@
+id=dumbdown_hide_smart_txt
+name=DumbDown Hide Smart Txt
+version=v1.0.0
+versionCode=1
+author=amber
+description=Hides the DumbDown Launcher's smart txt (OpenBubbles / Google Messages) and contact sync tiles by setting the app's own hide_smart_txt=true preference. Works alongside DumbDown Plan Unlock: when that module is active it writes the value itself (so the two never race on the prefs file) and this module only acts as the switch; on its own this module writes the value directly. Remove it to bring the tiles back.

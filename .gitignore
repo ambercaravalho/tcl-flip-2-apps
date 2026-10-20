@@ -11,6 +11,9 @@
 /microg/*.apk.asc
 /microg/*.zip
 
+# LSPosed module build intermediates (build.sh output; the signed APK is tracked).
+/lsposed/*/build/
+
 # Scratch dir used while pulling files off the device / staging downloads.
 /work/
 
