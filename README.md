@@ -365,6 +365,11 @@ Hiding Dumb Keys only hides its settings tile; the keyboard keeps working. Its s
 reachable with
 `adb shell am start -n com.offlineinc.dumbtt9/io.github.sspanak.tt9.preferences.PreferencesActivity`.
 
+The same passes also relabel tiles. `RENAME` in `UnhideHook.java` maps a tile ID to the label to
+show instead; it currently renames smart music (`__DUMB_SPOTIFY__`, which is the launcher's
+Spotify client) to `spotify`. The launcher sorts the drawer after this, so a renamed tile lands
+in its new alphabetical spot.
+
 Those class names are obfuscated, and every launcher update renames them (v6.42.0 called them
 `bc.g1` and `bc.j`). So the module doesn't look them up by name. Instead,
 [`DexScanner.java`](lsposed/unhide-apps/src/com/amber/dumbdownunhide/DexScanner.java) reads the
@@ -375,8 +380,8 @@ obfuscation leaves alone:
   `hide_audio_bundle` and `hide_smart_txt` preferences.
 - The injector is the coroutine body that loads both `__CONTACT_SYNC__` and `__QUACK__`.
 
-Each tile's ID is read from the field that its `toString()` prints as `packageName=`, so no field
-names are hardcoded either. The scan takes about a second on the phone, so its result is cached in
+Each tile's ID and label are read from the fields that its `toString()` prints as `packageName=`
+and `label=`, so no field names are hardcoded either. The scan takes about a second on the phone, so its result is cached in
 the launcher's `cache/dumbdown-unhide.properties` and only redone when the launcher APK changes.
 If a future update changes the strings themselves, the module logs it (see Verify) rather than
 crashing the launcher.
@@ -410,7 +415,7 @@ adb shell am force-stop com.offlineinc.dumbdownlauncher
 ```
 
 Magisk and Chrome now show in the app drawer and can be added to the home grid, and the hidden
-tiles are gone from both. To update after editing `UNHIDE` or `HIDE`, rebuild, run
+tiles are gone from both. To update after editing `UNHIDE`, `HIDE` or `RENAME`, rebuild, run
 `adb install -r` with the new APK, and force-stop the launcher again — LSPosed keeps the module
 enabled and scoped across updates.
 
@@ -420,11 +425,12 @@ enabled and scoped across updates.
 adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep DumbDownUnhide
 ```
 
-You want three lines when the launcher starts, and a fourth once a hidden tile has been filtered:
+You want three lines when the launcher starts, and two more once the tile lists have been built:
 
 - `unhid [com.topjohnwu.magisk, ...] in place`
 - `hiding tiles via bc.f1.a`
 - `scrubbing drawer after bc.k.invokeSuspend`
+- `renamed tile __DUMB_SPOTIFY__ from "smart music" to "spotify"` (logged once per launcher start)
 - `hid tiles [...]` (logged once per launcher start)
 
 The class names in the middle two lines change with each launcher build. On the first start after

@@ -41,7 +41,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * (drawer, default grid) ends with the launcher's subscription-lock pass, so its
  * return value is filtered. One coroutine also injects tiles (quack, contact
  * sync) straight into the open drawer's on-screen list and into the drawer cache
- * the home grid reads, so both are scrubbed after it runs.
+ * the home grid reads, so both are scrubbed after it runs. The same passes
+ * relabel the tiles in RENAME.
  *
  * Both of those are obfuscated and renamed by every launcher build, so they are
  * found by the string constants they load (see {@link DexScanner}) and the result
@@ -64,6 +65,12 @@ public class UnhideHook implements IXposedHookLoadPackage {
         "__FREE_UP_SPACE__",
         "com.openbubbles.messaging", "__GOOGLE_MESSAGES__",       // smart txt
         "__CONTACT_SYNC__"));
+
+    /** Tile IDs to relabel, mapped to the label to show instead. */
+    private static final Map<String, String> RENAME = new HashMap<>();
+    static {
+        RENAME.put("__DUMB_SPOTIFY__", "spotify");                // smart music
+    }
 
     private static final String LAUNCHER = "com.offlineinc.dumbdownlauncher";
     private static final String ALL_APPS_ACTIVITY = LAUNCHER + ".AllAppsActivity";
@@ -102,14 +109,16 @@ public class UnhideHook implements IXposedHookLoadPackage {
     private static final String CACHE_FILE = "cache/dumbdown-unhide.properties";
     private static final String CACHE_NONE = "-";
 
-    /** Tiles are a Kotlin data class whose toString() reads "AppItem(packageName=..., ...)". */
-    private static final String TILE_ID_LABEL = "packageName=";
+    /** Tiles are a Kotlin data class whose toString() reads "AppItem(packageName=..., label=..., ...)". */
+    private static final String TILE_ID_KEY = "packageName=";
+    private static final String TILE_LABEL_KEY = ", label=";
 
     private static final String TAG = "DumbDownUnhide: ";
 
     private static final AtomicBoolean loggedFirstHide = new AtomicBoolean();
-    private static final Map<Class<?>, TileIdField> tileIdFields = new ConcurrentHashMap<>();
-    private static final TileIdField NOT_A_TILE = new TileIdField(null);
+    private static final AtomicBoolean loggedFirstRename = new AtomicBoolean();
+    private static final Map<Class<?>, TileFields> tileFields = new ConcurrentHashMap<>();
+    private static final TileFields NOT_A_TILE = new TileFields(null, null);
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -437,13 +446,15 @@ public class UnhideHook implements IXposedHookLoadPackage {
         ArrayList<Object> kept = new ArrayList<>(list.size());
         List<String> hidden = null;
         for (Object item : list) {
-            String id = tileId(item);
+            TileFields tile = tileFields(item);
+            String id = tile != null ? tile.id(item) : null;
             if (id != null && HIDE.contains(id)) {
                 if (hidden == null) {
                     hidden = new ArrayList<>();
                 }
                 hidden.add(id);
             } else {
+                relabel(tile, item, id);
                 kept.add(item);
             }
         }
@@ -459,7 +470,8 @@ public class UnhideHook implements IXposedHookLoadPackage {
         List<Object> drop = null;
         List<String> hidden = null;
         for (Object item : list) {
-            String id = tileId(item);
+            TileFields tile = tileFields(item);
+            String id = tile != null ? tile.id(item) : null;
             if (id != null && HIDE.contains(id)) {
                 if (drop == null) {
                     drop = new ArrayList<>();
@@ -467,11 +479,31 @@ public class UnhideHook implements IXposedHookLoadPackage {
                 }
                 drop.add(item);
                 hidden.add(id);
+            } else {
+                relabel(tile, item, id);
             }
         }
         if (drop != null) {
             list.removeAll(drop);
             logFirstHide(hidden);
+        }
+    }
+
+    private static void relabel(TileFields tile, Object item, String id) {
+        String label = id != null ? RENAME.get(id) : null;
+        if (label == null || tile.label == null) {
+            return;
+        }
+        try {
+            Object old = tile.label.get(item);
+            if (!label.equals(old)) {
+                tile.label.set(item, label);
+                if (loggedFirstRename.compareAndSet(false, true)) {
+                    XposedBridge.log(TAG + "renamed tile " + id + " from \"" + old + "\" to \"" + label + "\"");
+                }
+            }
+        } catch (IllegalAccessException e) {
+            XposedBridge.log(TAG + "couldn't rename tile " + id + ": " + e);
         }
     }
 
@@ -481,47 +513,56 @@ public class UnhideHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static String tileId(Object item) {
+    /** Returns the tile's ID and label fields, or null if {@code item} isn't a tile. */
+    private static TileFields tileFields(Object item) {
         if (item == null) {
             return null;
         }
         Class<?> cls = item.getClass();
-        TileIdField id = tileIdFields.get(cls);
-        if (id == null) {
-            id = findTileIdField(item);
-            if (id == null) {
+        TileFields fields = tileFields.get(cls);
+        if (fields == null) {
+            fields = findTileFields(item);
+            if (fields == null) {
                 return null;
             }
-            tileIdFields.put(cls, id);
+            tileFields.put(cls, fields);
         }
-        if (id.field == null) {
-            return null;
-        }
-        try {
-            return (String) id.field.get(item);
-        } catch (IllegalAccessException e) {
-            return null;
-        }
+        return fields != NOT_A_TILE ? fields : null;
     }
 
     /**
-     * Picks the String field whose value toString() prints after "packageName=".
-     * Returns NOT_A_TILE for classes that don't print it, or null when this item
-     * can't tell the fields apart, so the next item is tried instead.
+     * Picks the String fields whose values toString() prints after "packageName="
+     * and ", label=". Returns NOT_A_TILE for classes that don't print an ID, or
+     * null when this item can't tell the fields apart, so the next item is tried
+     * instead. A tile class that stops printing its label just can't be relabeled.
      */
-    private static TileIdField findTileIdField(Object item) {
+    private static TileFields findTileFields(Object item) {
         String text;
         try {
             text = String.valueOf(item);
         } catch (Throwable t) {
             return NOT_A_TILE;
         }
-        int start = text.indexOf(TILE_ID_LABEL);
-        if (start < 0) {
+        if (!text.contains(TILE_ID_KEY)) {
             return NOT_A_TILE;
         }
-        start += TILE_ID_LABEL.length();
+        Field id = fieldPrintedAfter(item, text, TILE_ID_KEY);
+        if (id == null) {
+            return null;
+        }
+        Field label = null;
+        if (text.contains(TILE_LABEL_KEY)) {
+            label = fieldPrintedAfter(item, text, TILE_LABEL_KEY);
+            if (label == null) {
+                return null;
+            }
+        }
+        return new TileFields(id, label);
+    }
 
+    /** The one String field whose value follows {@code key} in {@code text}, or null. */
+    private static Field fieldPrintedAfter(Object item, String text, String key) {
+        int start = text.indexOf(key) + key.length();
         Field match = null;
         for (Field f : item.getClass().getDeclaredFields()) {
             if (Modifier.isStatic(f.getModifiers()) || f.getType() != String.class) {
@@ -545,7 +586,7 @@ public class UnhideHook implements IXposedHookLoadPackage {
                 match = f;
             }
         }
-        return match != null ? new TileIdField(match) : null;
+        return match;
     }
 
     /** A launcher method identified by the string constants it loads and its signature. */
@@ -564,12 +605,22 @@ public class UnhideHook implements IXposedHookLoadPackage {
         abstract boolean matches(Method m);
     }
 
-    private static final class TileIdField {
-        /** Null for classes that aren't tiles. */
-        final Field field;
+    private static final class TileFields {
+        final Field id;
+        /** Null when the tile class doesn't print its label. */
+        final Field label;
 
-        TileIdField(Field field) {
-            this.field = field;
+        TileFields(Field id, Field label) {
+            this.id = id;
+            this.label = label;
+        }
+
+        String id(Object item) {
+            try {
+                return (String) id.get(item);
+            } catch (IllegalAccessException e) {
+                return null;
+            }
         }
     }
 }
