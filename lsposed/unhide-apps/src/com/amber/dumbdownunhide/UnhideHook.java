@@ -1,14 +1,26 @@
 package com.amber.dumbdownunhide;
 
+import android.content.pm.ApplicationInfo;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -30,6 +42,10 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * return value is filtered. One coroutine also injects tiles (quack, contact
  * sync) straight into the open drawer's on-screen list and into the drawer cache
  * the home grid reads, so both are scrubbed after it runs.
+ *
+ * Both of those are obfuscated and renamed by every launcher build, so they are
+ * found by the string constants they load (see {@link DexScanner}) and the result
+ * is cached until the launcher APK changes.
  */
 public class UnhideHook implements IXposedHookLoadPackage {
 
@@ -56,16 +72,43 @@ public class UnhideHook implements IXposedHookLoadPackage {
     // identifies the set even after other entries are removed.
     private static final String DENYLIST_MARKER = LAUNCHER;
 
-    // Obfuscated names from the launcher build kept in apks/. A launcher update
-    // will likely rename these; the hook logs "not found" when that happens.
-    private static final String TILE_FILTER_CLASS = "bc.g1";
-    private static final String TILE_INJECTOR_CLASS = "bc.j";
-    private static final String TILE_ID_FIELD = "a";
+    /** The subscription-lock pass: {@code static ArrayList f(ArrayList tiles, prefs)}. */
+    private static final Fingerprint TILE_FILTER = new Fingerprint("filter", "tile filter",
+            "has_subscription", "hide_audio_bundle", "hide_smart_txt") {
+        @Override
+        boolean matches(Method m) {
+            Class<?>[] params = m.getParameterTypes();
+            return Modifier.isStatic(m.getModifiers()) && m.getReturnType() == ArrayList.class
+                && params.length > 0 && params[0] == ArrayList.class;
+        }
+    };
+
+    /** The coroutine body that injects the quack and contact sync tiles. */
+    private static final Fingerprint TILE_INJECTOR = new Fingerprint("injector", "tile injector",
+            "__CONTACT_SYNC__", "__QUACK__") {
+        @Override
+        boolean matches(Method m) {
+            Class<?>[] params = m.getParameterTypes();
+            return !Modifier.isStatic(m.getModifiers()) && m.getReturnType() == Object.class
+                && params.length == 1 && params[0] == Object.class;
+        }
+    };
+
+    private static final Fingerprint[] FINGERPRINTS = {TILE_FILTER, TILE_INJECTOR};
+
+    // Bump when a fingerprint changes, so results cached by an older module build are dropped.
+    private static final int CACHE_VERSION = 1;
+    private static final String CACHE_FILE = "cache/dumbdown-unhide.properties";
+    private static final String CACHE_NONE = "-";
+
+    /** Tiles are a Kotlin data class whose toString() reads "AppItem(packageName=..., ...)". */
+    private static final String TILE_ID_LABEL = "packageName=";
 
     private static final String TAG = "DumbDownUnhide: ";
 
     private static final AtomicBoolean loggedFirstHide = new AtomicBoolean();
-    private static volatile TileIdField tileIdField;
+    private static final Map<Class<?>, TileIdField> tileIdFields = new ConcurrentHashMap<>();
+    private static final TileIdField NOT_A_TILE = new TileIdField(null);
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -78,13 +121,20 @@ public class UnhideHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + "unhide failed: " + t);
         }
+        Map<Fingerprint, Method> methods;
         try {
-            hookTileFilter(cl);
+            methods = resolve(lpparam.appInfo, cl);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + "launcher code lookup failed: " + t);
+            return;
+        }
+        try {
+            hookTileFilter(methods.get(TILE_FILTER));
         } catch (Throwable t) {
             XposedBridge.log(TAG + "tile filter hook failed: " + t);
         }
         try {
-            hookTileInjector(cl);
+            hookTileInjector(cl, methods.get(TILE_INJECTOR));
         } catch (Throwable t) {
             XposedBridge.log(TAG + "drawer scrub hook failed: " + t);
         }
@@ -133,35 +183,169 @@ public class UnhideHook implements IXposedHookLoadPackage {
             + " - the launcher was probably updated");
     }
 
-    private static void hookTileFilter(ClassLoader cl) {
-        Class<?> cls;
-        try {
-            cls = Class.forName(TILE_FILTER_CLASS, false, cl);
-        } catch (ClassNotFoundException e) {
-            XposedBridge.log(TAG + "tile filter " + TILE_FILTER_CLASS
-                + " not found - the launcher was probably updated");
-            return;
+    /**
+     * Maps each fingerprint to the launcher method it matches, leaving out any that
+     * match nothing or more than one method. Scanning the dex only happens when the
+     * launcher APK differs from the one the cache was written for.
+     */
+    private static Map<Fingerprint, Method> resolve(ApplicationInfo app, ClassLoader cl)
+            throws IOException {
+        File apk = new File(app.sourceDir);
+        String key = CACHE_VERSION + " " + apk.getPath() + " " + apk.length() + " " + apk.lastModified();
+        File cacheFile = new File(app.dataDir, CACHE_FILE);
+
+        Map<Fingerprint, Method> resolved = fromCache(readCache(cacheFile), key, cl);
+        if (resolved != null) {
+            return resolved;
         }
 
-        Method target = null;
-        for (Method m : cls.getDeclaredMethods()) {
-            Class<?>[] params = m.getParameterTypes();
-            if (Modifier.isStatic(m.getModifiers()) && m.getReturnType() == ArrayList.class
-                    && params.length > 0 && params[0] == ArrayList.class) {
-                if (target != null) {
-                    XposedBridge.log(TAG + "tile filter " + TILE_FILTER_CLASS
-                        + " has more than one candidate method - the launcher was probably updated");
-                    return;
-                }
-                target = m;
+        Set<String> anchors = new HashSet<>();
+        for (Fingerprint fp : FINGERPRINTS) {
+            anchors.addAll(fp.strings);
+        }
+        long start = System.nanoTime();
+        List<DexScanner.Hit> hits = DexScanner.find(app.sourceDir, anchors);
+        XposedBridge.log(TAG + "scanned launcher dex in " + (System.nanoTime() - start) / 1000000 + " ms");
+
+        resolved = new HashMap<>();
+        Properties cache = new Properties();
+        cache.setProperty("key", key);
+        for (Fingerprint fp : FINGERPRINTS) {
+            Method m = match(fp, hits, cl);
+            if (m != null) {
+                resolved.put(fp, m);
+            }
+            cache.setProperty(fp.id, m != null ? spec(m) : CACHE_NONE);
+        }
+        writeCache(cacheFile, cache);
+        return resolved;
+    }
+
+    /** Returns null when the cache is missing, stale, or names a method that no longer fits. */
+    private static Map<Fingerprint, Method> fromCache(Properties cache, String key, ClassLoader cl) {
+        if (cache == null || !key.equals(cache.getProperty("key"))) {
+            return null;
+        }
+        Map<Fingerprint, Method> resolved = new HashMap<>();
+        for (Fingerprint fp : FINGERPRINTS) {
+            String spec = cache.getProperty(fp.id);
+            if (CACHE_NONE.equals(spec)) {
+                XposedBridge.log(TAG + fp.label + " not found (cached) - the launcher was probably updated");
+                continue;
+            }
+            Method m = spec != null ? fromSpec(spec, cl) : null;
+            if (m == null || !fp.matches(m)) {
+                return null;
+            }
+            resolved.put(fp, m);
+        }
+        return resolved;
+    }
+
+    private static Method match(Fingerprint fp, List<DexScanner.Hit> hits, ClassLoader cl) {
+        List<Method> candidates = new ArrayList<>();
+        for (DexScanner.Hit hit : hits) {
+            if (!hit.strings.containsAll(fp.strings)) {
+                continue;
+            }
+            Method m = findMethod(cl, hit.className, hit.methodName, hit.descriptor);
+            if (m != null && fp.matches(m)) {
+                candidates.add(m);
             }
         }
-        if (target == null) {
-            XposedBridge.log(TAG + "tile filter method not found in " + TILE_FILTER_CLASS
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        if (candidates.isEmpty()) {
+            XposedBridge.log(TAG + fp.label + " not found - the launcher was probably updated");
+        } else {
+            XposedBridge.log(TAG + fp.label + " is ambiguous " + candidates
                 + " - the launcher was probably updated");
+        }
+        return null;
+    }
+
+    private static Method findMethod(ClassLoader cl, String className, String name, String descriptor) {
+        Class<?> cls;
+        try {
+            cls = Class.forName(className, false, cl);
+        } catch (ClassNotFoundException | LinkageError e) {
+            return null;
+        }
+        for (Method m : cls.getDeclaredMethods()) {
+            if (m.getName().equals(name) && descriptor(m).equals(descriptor)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    private static String spec(Method m) {
+        return m.getDeclaringClass().getName() + " " + m.getName() + " " + descriptor(m);
+    }
+
+    private static Method fromSpec(String spec, ClassLoader cl) {
+        String[] parts = spec.split(" ", 3);
+        return parts.length == 3 ? findMethod(cl, parts[0], parts[1], parts[2]) : null;
+    }
+
+    private static String descriptor(Method m) {
+        StringBuilder sb = new StringBuilder("(");
+        for (Class<?> p : m.getParameterTypes()) {
+            sb.append(descriptor(p));
+        }
+        return sb.append(')').append(descriptor(m.getReturnType())).toString();
+    }
+
+    private static String descriptor(Class<?> c) {
+        if (c.isArray()) {
+            return c.getName().replace('.', '/');
+        }
+        if (!c.isPrimitive()) {
+            return "L" + c.getName().replace('.', '/') + ";";
+        }
+        if (c == void.class) return "V";
+        if (c == boolean.class) return "Z";
+        if (c == byte.class) return "B";
+        if (c == char.class) return "C";
+        if (c == short.class) return "S";
+        if (c == int.class) return "I";
+        if (c == long.class) return "J";
+        if (c == float.class) return "F";
+        return "D";
+    }
+
+    private static Properties readCache(File file) {
+        if (!file.isFile()) {
+            return null;
+        }
+        Properties p = new Properties();
+        try (InputStream in = new FileInputStream(file)) {
+            p.load(in);
+            return p;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static void writeCache(File file, Properties cache) {
+        File tmp = new File(file.getPath() + ".tmp");
+        file.getParentFile().mkdirs();
+        try (OutputStream out = new FileOutputStream(tmp)) {
+            cache.store(out, null);
+        } catch (IOException e) {
+            XposedBridge.log(TAG + "couldn't write " + file + ": " + e);
             return;
         }
+        if (!tmp.renameTo(file)) {
+            XposedBridge.log(TAG + "couldn't write " + file);
+        }
+    }
 
+    private static void hookTileFilter(Method target) {
+        if (target == null) {
+            return;
+        }
         XposedBridge.hookMethod(target, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
@@ -171,64 +355,50 @@ public class UnhideHook implements IXposedHookLoadPackage {
                 }
             }
         });
-        XposedBridge.log(TAG + "hiding tiles via " + TILE_FILTER_CLASS + "." + target.getName());
+        XposedBridge.log(TAG + "hiding tiles via " + target.getDeclaringClass().getName()
+            + "." + target.getName());
     }
 
-    private static void hookTileInjector(ClassLoader cl) throws Exception {
-        Class<?> injector;
-        try {
-            injector = Class.forName(TILE_INJECTOR_CLASS, false, cl);
-        } catch (ClassNotFoundException e) {
-            XposedBridge.log(TAG + "tile injector " + TILE_INJECTOR_CLASS
-                + " not found - the launcher was probably updated");
+    private static void hookTileInjector(ClassLoader cl, Method target) throws Exception {
+        if (target == null) {
             return;
         }
-        Method invokeSuspend;
-        try {
-            invokeSuspend = injector.getDeclaredMethod("invokeSuspend", Object.class);
-        } catch (NoSuchMethodException e) {
-            XposedBridge.log(TAG + TILE_INJECTOR_CLASS
-                + " is not a coroutine any more - the launcher was probably updated");
-            return;
-        }
+        final Class<?> allApps = Class.forName(ALL_APPS_ACTIVITY, true, cl);
 
-        Class<?> allApps = Class.forName(ALL_APPS_ACTIVITY, true, cl);
-
-        // Static ArrayList cache, read by the home grid and when the drawer reopens.
-        final List<Field> caches = new ArrayList<>();
-        // Instance lists on the open drawer, including the one it renders.
-        final List<Field> drawerLists = new ArrayList<>();
-        for (Field f : allApps.getDeclaredFields()) {
-            boolean isStatic = Modifier.isStatic(f.getModifiers());
-            if (isStatic && f.getType() == ArrayList.class) {
-                f.setAccessible(true);
-                caches.add(f);
-            } else if (!isStatic && List.class.isAssignableFrom(f.getType())) {
-                f.setAccessible(true);
-                drawerLists.add(f);
-            }
-        }
-        // The coroutine holds the drawer it's updating.
+        // R8 merges coroutine classes and widens field types to Object, so every
+        // field is checked by the value it holds when the coroutine runs.
         final List<Field> activityRefs = new ArrayList<>();
-        for (Field f : injector.getDeclaredFields()) {
-            if (!Modifier.isStatic(f.getModifiers()) && allApps.isAssignableFrom(f.getType())) {
+        for (Field f : target.getDeclaringClass().getDeclaredFields()) {
+            if (!Modifier.isStatic(f.getModifiers()) && f.getType().isAssignableFrom(allApps)) {
                 f.setAccessible(true);
                 activityRefs.add(f);
             }
         }
-        if (caches.isEmpty() && (drawerLists.isEmpty() || activityRefs.isEmpty())) {
-            XposedBridge.log(TAG + "drawer lists not found in " + allApps.getName()
-                + " - the launcher was probably updated");
-            return;
+        // Instance lists on the open drawer, including the one it renders, and
+        // static caches, read by the home grid and when the drawer reopens.
+        final List<Field> drawerLists = new ArrayList<>();
+        final List<Field> caches = new ArrayList<>();
+        for (Field f : allApps.getDeclaredFields()) {
+            int mod = f.getModifiers();
+            Class<?> type = f.getType();
+            if (!Modifier.isStatic(mod)) {
+                if (type.isAssignableFrom(List.class) || List.class.isAssignableFrom(type)) {
+                    f.setAccessible(true);
+                    drawerLists.add(f);
+                }
+            } else if (!Modifier.isFinal(mod) && type.isAssignableFrom(ArrayList.class)) {
+                f.setAccessible(true);
+                caches.add(f);
+            }
         }
 
-        XposedBridge.hookMethod(invokeSuspend, new XC_MethodHook() {
+        XposedBridge.hookMethod(target, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 for (Field ref : activityRefs) {
                     try {
                         Object activity = ref.get(param.thisObject);
-                        if (activity == null) {
+                        if (!allApps.isInstance(activity)) {
                             continue;
                         }
                         for (Field f : drawerLists) {
@@ -258,8 +428,8 @@ public class UnhideHook implements IXposedHookLoadPackage {
                 }
             }
         });
-        XposedBridge.log(TAG + "scrubbing drawer after " + TILE_INJECTOR_CLASS + ".invokeSuspend ("
-            + drawerLists.size() + " drawer lists, " + caches.size() + " caches)");
+        XposedBridge.log(TAG + "scrubbing drawer after " + target.getDeclaringClass().getName()
+            + "." + target.getName());
     }
 
     private static ArrayList<Object> withoutHidden(List<?> list) {
@@ -315,35 +485,89 @@ public class UnhideHook implements IXposedHookLoadPackage {
             return null;
         }
         Class<?> cls = item.getClass();
-        TileIdField cached = tileIdField;
-        Field f;
-        if (cached != null && cached.owner == cls) {
-            f = cached.field;
-        } else {
-            try {
-                f = cls.getDeclaredField(TILE_ID_FIELD);
-            } catch (NoSuchFieldException e) {
+        TileIdField id = tileIdFields.get(cls);
+        if (id == null) {
+            id = findTileIdField(item);
+            if (id == null) {
                 return null;
             }
-            if (f.getType() != String.class) {
-                return null;
-            }
-            f.setAccessible(true);
-            tileIdField = new TileIdField(cls, f);
+            tileIdFields.put(cls, id);
+        }
+        if (id.field == null) {
+            return null;
         }
         try {
-            return (String) f.get(item);
+            return (String) id.field.get(item);
         } catch (IllegalAccessException e) {
             return null;
         }
     }
 
+    /**
+     * Picks the String field whose value toString() prints after "packageName=".
+     * Returns NOT_A_TILE for classes that don't print it, or null when this item
+     * can't tell the fields apart, so the next item is tried instead.
+     */
+    private static TileIdField findTileIdField(Object item) {
+        String text;
+        try {
+            text = String.valueOf(item);
+        } catch (Throwable t) {
+            return NOT_A_TILE;
+        }
+        int start = text.indexOf(TILE_ID_LABEL);
+        if (start < 0) {
+            return NOT_A_TILE;
+        }
+        start += TILE_ID_LABEL.length();
+
+        Field match = null;
+        for (Field f : item.getClass().getDeclaredFields()) {
+            if (Modifier.isStatic(f.getModifiers()) || f.getType() != String.class) {
+                continue;
+            }
+            f.setAccessible(true);
+            String value;
+            try {
+                value = (String) f.get(item);
+            } catch (IllegalAccessException e) {
+                continue;
+            }
+            if (value == null || !text.startsWith(value, start)) {
+                continue;
+            }
+            int end = start + value.length();
+            if (end < text.length() && (text.charAt(end) == ',' || text.charAt(end) == ')')) {
+                if (match != null) {
+                    return null;
+                }
+                match = f;
+            }
+        }
+        return match != null ? new TileIdField(match) : null;
+    }
+
+    /** A launcher method identified by the string constants it loads and its signature. */
+    private abstract static class Fingerprint {
+        /** Cache key. */
+        final String id;
+        final String label;
+        final Set<String> strings;
+
+        Fingerprint(String id, String label, String... strings) {
+            this.id = id;
+            this.label = label;
+            this.strings = new HashSet<>(Arrays.asList(strings));
+        }
+
+        abstract boolean matches(Method m);
+    }
+
     private static final class TileIdField {
-        final Class<?> owner;
+        /** Null for classes that aren't tiles. */
         final Field field;
 
-        TileIdField(Class<?> owner, Field field) {
-            this.owner = owner;
+        TileIdField(Field field) {
             this.field = field;
         }
     }

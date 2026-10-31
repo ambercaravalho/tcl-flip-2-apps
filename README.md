@@ -384,8 +384,8 @@ Going the other way, adding entries to that set only works for real installed ap
 launcher's tiles are virtual — built-in screens with IDs like `__QUACK__` that it appends to the
 list *after* the denylist has been applied. So the module hides tiles one step later instead.
 Every tile list the launcher builds (the drawer, and the default home grid) ends with the same
-subscription-lock pass, `bc.g1.a`, and the hook drops hidden tiles from what it returns. One
-background task, `bc.j`, bypasses that: it adds tiles (quack, contact sync) straight into the open
+subscription-lock pass (`bc.f1.a` in v6.51.0), and the hook drops hidden tiles from what it
+returns. One background task (`bc.k`) bypasses that: it adds tiles (quack, contact sync) straight into the open
 drawer's on-screen list and into the drawer cache that the home grid reads. So after each run the
 hook removes hidden tiles from both — from the on-screen list in place, since the drawer is
 watching that exact list object.
@@ -410,9 +410,21 @@ reachable with
 The smart txt entry overlaps with the [hide smart txt module](#hide-smart-txt-module-magiskhide-smart-txt);
 keep that module anyway if you want the contact sync tile and the OpenBubbles linking flow gone too.
 
-Unlike the denylist, `bc.g1`, `bc.j` and the tile ID field `a` are obfuscated names that can only
-be found by name, so they're tied to the launcher build in `apks/`. A launcher update will
-probably rename them; the module logs it (see Verify) rather than crashing the launcher.
+Those class names are obfuscated, and every launcher update renames them (v6.42.0 called them
+`bc.g1` and `bc.j`). So the module doesn't look them up by name. Instead,
+[`DexScanner.java`](lsposed/unhide-apps/src/com/amber/dumbdownunhide/DexScanner.java) reads the
+launcher's own dex files and finds the methods by the string constants they use, which
+obfuscation leaves alone:
+
+- The filter is the static `ArrayList -> ArrayList` method that reads the `has_subscription`,
+  `hide_audio_bundle` and `hide_smart_txt` preferences.
+- The injector is the coroutine body that loads both `__CONTACT_SYNC__` and `__QUACK__`.
+
+Each tile's ID is read from the field that its `toString()` prints as `packageName=`, so no field
+names are hardcoded either. The scan takes about a second on the phone, so its result is cached in
+the launcher's `cache/dumbdown-unhide.properties` and only redone when the launcher APK changes.
+If a future update changes the strings themselves, the module logs it (see Verify) rather than
+crashing the launcher.
 
 Nothing in the APK on the phone changes, and the module needs LSPosed, set up as in microG
 support above.
@@ -456,12 +468,16 @@ adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep DumbDownUnhide
 You want three lines when the launcher starts, and a fourth once a hidden tile has been filtered:
 
 - `unhid [com.topjohnwu.magisk, ...] in place`
-- `hiding tiles via bc.g1.a`
-- `scrubbing drawer after bc.j.invokeSuspend (1 drawer lists, 1 caches)`
+- `hiding tiles via bc.f1.a`
+- `scrubbing drawer after bc.k.invokeSuspend`
 - `hid tiles [...]` (logged once per launcher start)
 
-Any line containing `not found` means a launcher update moved or renamed what that step looks
-for, so the hook needs updating. The other steps keep working regardless.
+The class names in the middle two lines change with each launcher build. On the first start after
+a launcher update, there's also `scanned launcher dex in N ms` before them.
+
+Any line containing `not found` or `ambiguous` means a launcher update changed the code that step
+looks for, so its fingerprint in `UnhideHook.java` needs updating. The other steps keep working
+regardless.
 
 ### Revert
 

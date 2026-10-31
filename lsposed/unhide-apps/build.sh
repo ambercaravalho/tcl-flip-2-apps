@@ -38,7 +38,7 @@ javac --release 8 -Xlint:all -d "$B/classes" -cp "$ANDROID_JAR:$B/stubs" $(find 
 "$BT/aapt2" link -o "$B/unsigned.apk" -I "$ANDROID_JAR" \
     --manifest AndroidManifest.xml -A assets \
     --min-sdk-version 30 --target-sdk-version 30 \
-    --version-code 3 --version-name 1.2.0
+    --version-code 4 --version-name 1.3.0
 
 (cd "$B/dex" && zip -q -X ../unsigned.apk classes.dex)
 
