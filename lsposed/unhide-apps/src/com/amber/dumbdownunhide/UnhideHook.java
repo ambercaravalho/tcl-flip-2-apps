@@ -62,7 +62,8 @@ public class UnhideHook implements IXposedHookLoadPackage {
         "__TWO_FACTOR__", "__DEVICE_SETUP__", "__QUACK__",
         "__DUMB_RIDE__", "__DUMB_SIGNAL__", "__CALENDAR__",
         "__FREE_UP_SPACE__",
-        "com.openbubbles.messaging", "__GOOGLE_MESSAGES__"));     // smart txt
+        "com.openbubbles.messaging", "__GOOGLE_MESSAGES__",       // smart txt
+        "__CONTACT_SYNC__"));
 
     private static final String LAUNCHER = "com.offlineinc.dumbdownlauncher";
     private static final String ALL_APPS_ACTIVITY = LAUNCHER + ".AllAppsActivity";

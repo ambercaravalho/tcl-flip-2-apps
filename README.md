@@ -1,6 +1,6 @@
 # tcl-flip-2-apps
 
-Fixes for the TCL Flip 2 / TCL Flip Go, packaged as three Magisk modules and one LSPosed module.
+Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules and one LSPosed module.
 Also keeps a copy of the phone's stock offlineinc apps so they can be reinstalled if you remove or
 break one, and notes on getting microG onto the phone, which needs no code from this repo but is
 fiddly enough to be worth writing down.
@@ -8,7 +8,6 @@ fiddly enough to be worth writing down.
 | Path                     | What it is                                                          |
 | ------------------------ | ------------------------------------------------------------------- |
 | `magisk/launcher/`       | Unlocks the app tiles and skips the failing activation screen.      |
-| `magisk/hide-smart-txt/` | Hides the smart txt (OpenBubbles) and contact sync tiles.           |
 | `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
 | `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
 | `apks/`                  | The three stock offlineinc APKs pulled off the device.              |
@@ -41,8 +40,7 @@ At every boot, `[service.sh](magisk/launcher/service.sh)` waits for the phone to
 SharedPreferences:
 
 - `has_subscription=true`, `hide_smart_txt=false`, `hide_audio_bundle=false` — every tile
-becomes openable. `hide_smart_txt` follows the [hide smart txt module](#hide-smart-txt-module-magiskhide-smart-txt)
-instead: while that module is active, this one writes `true`.
+becomes openable. To hide tiles you don't use, see the LSPosed module below.
 - `is_paired=true`, `device_registered=true`, `setup_skipped=true` — the launcher considers
 activation done, so it boots straight to the home grid instead of the SIM-check screen.
 
@@ -75,48 +73,6 @@ If Magisk only extracts `module.prop` (it has done this on this device), copy `s
 Remove the module in the Magisk app, or delete `/data/adb/modules/dumbdown_plan_unlock`, then
 reboot. The launcher keeps whatever settings were last written; delete
 `/data/data/com.offlineinc.dumbdownlauncher/shared_prefs/device_pairing.xml` for a clean slate.
-
-### Hide smart txt module: `magisk/hide-smart-txt/`
-
-If you don't use smart txt, this sets the launcher's own `hide_smart_txt=true` switch, the
-value it uses for plans without smart txt. The smart txt tile (OpenBubbles or Google Messages,
-depending on the platform you picked) disappears from the home grid, the contact sync tile
-disappears from the app drawer, and the launcher stops offering the OpenBubbles linking flow.
-
-It's built to sit alongside the launcher module. Magisk runs every module's `service.sh` at the
-same time, and both modules would otherwise rewrite `device_pairing.xml` at once and could undo
-each other's changes. So only one writes per boot:
-
-- With the launcher module active, this module's
-  [`service.sh`](magisk/hide-smart-txt/service.sh) just exits. The launcher module sees this
-  module's folder under `/data/adb/modules/` and writes `hide_smart_txt=true` instead of `false`.
-- On its own, it waits for the prefs file, writes `hide_smart_txt=true`, and force-stops the
-  launcher if anything changed.
-
-A module counts as active if its folder exists and has no `disable` or `remove` file, so
-switching it off in the Magisk app takes effect on the next boot. Each boot's result lands in
-`/data/local/tmp/dumbdown_hide_smart_txt.log` (and in `dumbdown_plan_unlock.log` when the
-launcher module did the write).
-
-#### Install
-
-Needs launcher module v1.2.0 or later if you use both — older versions always write `false`.
-
-```bash
-cd magisk/hide-smart-txt && zip -r ../../hide-smart-txt-module.zip . && cd ../..
-adb push hide-smart-txt-module.zip /data/local/tmp/
-adb shell su -c 'magisk --install-module /data/local/tmp/hide-smart-txt-module.zip'
-adb reboot
-```
-
-As with the launcher module, if only `module.prop` lands in
-`/data/adb/modules/dumbdown_hide_smart_txt/`, copy `service.sh` in by hand.
-
-#### Revert
-
-Remove the module in the Magisk app and reboot. With the launcher module installed, it writes
-`hide_smart_txt=false` again on that boot and the tiles come back. Without it, the value stays
-`true`; delete `device_pairing.xml` as above, or set the value back by hand.
 
 ### LSPosed status notification module: `magisk/lsposed-notif/`
 
@@ -403,12 +359,11 @@ The hidden tiles are the `HIDE` set in `UnhideHook.java`, matched on each tile's
 | smart cal     | `__CALENDAR__`                                                      |
 | free up space | `__FREE_UP_SPACE__`                                                 |
 | smart txt     | `com.openbubbles.messaging` or `__GOOGLE_MESSAGES__`, per platform  |
+| contact sync  | `__CONTACT_SYNC__`                                                  |
 
 Hiding Dumb Keys only hides its settings tile; the keyboard keeps working. Its settings are still
 reachable with
 `adb shell am start -n com.offlineinc.dumbtt9/io.github.sspanak.tt9.preferences.PreferencesActivity`.
-The smart txt entry overlaps with the [hide smart txt module](#hide-smart-txt-module-magiskhide-smart-txt);
-keep that module anyway if you want the contact sync tile and the OpenBubbles linking flow gone too.
 
 Those class names are obfuscated, and every launcher update renames them (v6.42.0 called them
 `bc.g1` and `bc.j`). So the module doesn't look them up by name. Instead,

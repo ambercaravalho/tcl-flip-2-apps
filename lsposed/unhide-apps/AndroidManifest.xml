@@ -14,7 +14,7 @@
             android:value="82" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Unhides Magisk and Chrome in DumbDown Launcher by removing them from its hardcoded app denylist, and hides tiles you don't use: dumb keys, 2-factor auth, device setup, quack, rideshare, signal, smart cal, free up space and smart txt." />
+            android:value="Unhides Magisk and Chrome in DumbDown Launcher by removing them from its hardcoded app denylist, and hides tiles you don't use: dumb keys, 2-factor auth, device setup, quack, rideshare, signal, smart cal, free up space, smart txt and contact sync." />
         <meta-data
             android:name="xposedscope"
             android:value="com.offlineinc.dumbdownlauncher" />
