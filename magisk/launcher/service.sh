@@ -16,12 +16,20 @@
 # when the user taps "skip pairing" / "skip setup" (za.p, za.o), so no app code
 # is modified. With the backend null-routed, the background refresh throws and
 # hits the app's "skipped" branch, leaving our values intact.
+#
+# It also keeps the browser available. Since v6.50.0 the launcher runs a one-time
+# "browser switch off" at start-up (cc.a) - `pm disable-user` on every browser in
+# BROWSERS - and records it as launcher_prefs: browser_disabled_once=true. That
+# flag is set here so the switch-off is skipped, and any browser left disabled
+# (by a data wipe that let the switch-off win the race, or by the diagnostics
+# screen's "browser off" toggle) is re-enabled.
 
 MODDIR=${0%/*}
 PKG=com.offlineinc.dumbdownlauncher
 PREFDIR=/data/data/$PKG/shared_prefs
 PAIRING=$PREFDIR/device_pairing.xml
 LAUNCHER=$PREFDIR/launcher_prefs.xml
+BROWSERS="com.android.chrome org.chromium.chrome"
 LOG=/data/local/tmp/dumbdown_plan_unlock.log
 
 CHANGED=0
@@ -90,7 +98,21 @@ set_bool "$PAIRING" is_paired true
 set_bool "$PAIRING" device_registered true
 set_bool "$LAUNCHER" setup_skipped true
 
-# 4. If anything changed, force-stop so the launcher reloads prefs and rebuilds
+# 4. Browser: skip the launcher's one-time switch-off, and undo it if it already ran.
+set_bool "$LAUNCHER" browser_disabled_once true
+DISABLED=$(pm list packages -d 2>/dev/null)
+for p in $BROWSERS; do
+    if echo "$DISABLED" | grep -qx "package:$p"; then
+        if pm enable "$p" >/dev/null 2>&1; then
+            log "re-enabled $p"
+            CHANGED=1
+        else
+            log "couldn't re-enable $p"
+        fi
+    fi
+done
+
+# 5. If anything changed, force-stop so the launcher reloads prefs and rebuilds
 #    its onboarding/tile state on next launch.
 if [ "$CHANGED" -eq 1 ]; then
     am force-stop "$PKG" 2>/dev/null

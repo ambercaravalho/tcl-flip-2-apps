@@ -7,7 +7,7 @@ this repo but is fiddly enough to be worth writing down.
 
 | Path                     | What it is                                                          |
 | ------------------------ | ------------------------------------------------------------------- |
-| `magisk/launcher/`       | Unlocks the app tiles and skips the failing activation screen.      |
+| `magisk/launcher/`       | Unlocks tiles, skips the activation screen, keeps the browser on.   |
 | `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
 | `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
 
@@ -51,6 +51,14 @@ SharedPreferences:
 becomes openable. To hide tiles you don't use, see the LSPosed module below.
 - `is_paired=true`, `device_registered=true`, `setup_skipped=true` — the launcher considers
 activation done, so it boots straight to the home grid instead of the SIM-check screen.
+
+It also keeps the browser around. Since v6.50.0 the launcher switches every browser off once at
+start-up (`pm disable-user` on `com.android.chrome` and `org.chromium.chrome`), and a disabled app
+vanishes from the drawer no matter what the LSPosed module below unhides. The launcher records
+that it's done this as `browser_disabled_once` in `launcher_prefs`, so the module sets that to
+`true` and the switch-off never runs. If a browser is disabled anyway — the launcher got there
+first after a data wipe, or you used *browser off* on the launcher's diagnostics screen — the
+module runs `pm enable` on it at the next boot.
 
 If anything changed, it force-stops the launcher so it reloads the new values. It only edits
 files that already exist and only rewrites when the contents actually differ, so repeated boots

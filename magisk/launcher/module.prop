@@ -1,6 +1,6 @@
 id=dumbdown_plan_unlock
 name=DumbDown Plan Unlock
-version=v1.3.0
-versionCode=4
+version=v1.4.0
+versionCode=5
 author=amber
-description=Repairs the DumbDown Launcher's backend-dependent features at boot without modifying app code: (1) unlocks plan-gated tiles (has_subscription=true, hide_smart_txt/hide_audio_bundle=false) and (2) stops the always-failing boot SIM-check/activation screen (is_paired=true, device_registered=true, setup_skipped=true). It writes the app's own "activated/skipped" values into its prefs and null-routes the defunct backend so nothing can re-lock them.
+description=Repairs the DumbDown Launcher's backend-dependent features at boot without modifying app code: (1) unlocks plan-gated tiles (has_subscription=true, hide_smart_txt/hide_audio_bundle=false) and (2) stops the always-failing boot SIM-check/activation screen (is_paired=true, device_registered=true, setup_skipped=true), and (3) keeps the browser enabled (browser_disabled_once=true, re-enabling Chrome/Chromium if the launcher switched it off). It writes the app's own "activated/skipped" values into its prefs and null-routes the defunct backend so nothing can re-lock them.
