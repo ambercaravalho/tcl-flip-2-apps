@@ -60,7 +60,7 @@ public class UnhideHook implements IXposedHookLoadPackage {
     /** Tile IDs (package names, or the launcher's __VIRTUAL__ tile IDs) to hide. */
     private static final Set<String> HIDE = new HashSet<>(Arrays.asList(
         "com.offlineinc.dumbtt9",                                 // dumb keys
-        "__TWO_FACTOR__", "__DEVICE_SETUP__", "__QUACK__",
+        "__TWO_FACTOR__", "__DEVICE_SETUP__",
         "__DUMB_RIDE__", "__DUMB_SIGNAL__", "__CALENDAR__",
         "__FREE_UP_SPACE__",
         "com.openbubbles.messaging", "__GOOGLE_MESSAGES__",       // smart txt

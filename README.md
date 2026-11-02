@@ -369,7 +369,6 @@ The hidden tiles are the `HIDE` set in `UnhideHook.java`, matched on each tile's
 | dumb keys     | `com.offlineinc.dumbtt9` (the DumbTT9 keyboard's settings app)      |
 | 2-factor auth | `__TWO_FACTOR__`                                                    |
 | device setup  | `__DEVICE_SETUP__`                                                  |
-| quack         | `__QUACK__`                                                         |
 | rideshare     | `__DUMB_RIDE__`                                                     |
 | signal        | `__DUMB_SIGNAL__` (the launcher's own client, not Signal's app)     |
 | smart cal     | `__CALENDAR__`                                                      |
