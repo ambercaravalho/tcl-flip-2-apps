@@ -1,16 +1,15 @@
 # tcl-flip-2-apps
 
 Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules and one LSPosed module.
-Also keeps a copy of the phone's stock offlineinc apps so they can be reinstalled if you remove or
-break one, and notes on getting microG onto the phone, which needs no code from this repo but is
-fiddly enough to be worth writing down.
+Also links to the official releases of the phone's stock offlineinc apps so they can be reinstalled
+if you remove or break one, and notes on getting microG onto the phone, which needs no code from
+this repo but is fiddly enough to be worth writing down.
 
 | Path                     | What it is                                                          |
 | ------------------------ | ------------------------------------------------------------------- |
 | `magisk/launcher/`       | Unlocks the app tiles and skips the failing activation screen.      |
 | `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
 | `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
-| `apks/`                  | The three stock offlineinc APKs pulled off the device.              |
 
 <details>
 <summary><b>The phone</b></summary>
@@ -21,8 +20,17 @@ Launcher** (`com.offlineinc.dumbdownlauncher`) — a locked-down launcher that o
 your plan is supposed to include. Two companion apps ship with it: DumbTT9
 (`com.offlineinc.dumbtt9`, the T9 keyboard) and Voice to Text (`com.offlineinc.voicetotext`).
 
-Reinstall a stock app with `adb install apks/com.offlineinc.dumbdownlauncher.apk` (each package
-is a single APK, so no split-APK tooling is needed).
+To reinstall a stock app, download its APK from the official releases and `adb install` it (each
+package is a single APK, so no split-APK tooling is needed):
+
+| App               | Package                           | Releases                                                                                   |
+| ----------------- | --------------------------------- | ------------------------------------------------------------------------------------------ |
+| DumbDown Launcher | `com.offlineinc.dumbdownlauncher` | [Offline-DC/dumb-down-launcher](https://github.com/Offline-DC/dumb-down-launcher/releases) |
+| DumbTT9           | `com.offlineinc.dumbtt9`          | [Offline-DC/dumbtt9](https://github.com/Offline-DC/dumbtt9/releases)                       |
+| Voice to Text     | `com.offlineinc.voicetotext`      | [Offline-DC/voicetotextapp](https://github.com/Offline-DC/voicetotextapp/releases)         |
+
+Each release lists its `sha256`; check it with `shasum -a 256` before installing. Releases marked
+*Pre-release* are beta builds, so take the one tagged *Latest* unless you want the beta channel.
 
 </details>
 
