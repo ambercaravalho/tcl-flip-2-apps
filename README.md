@@ -1,6 +1,6 @@
 # tcl-flip-2-apps
 
-Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules and one LSPosed module.
+Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules and two LSPosed modules.
 Also links to the official releases of the phone's stock offlineinc apps so they can be reinstalled
 if you remove or break one, and notes on getting microG onto the phone, which needs no code from
 this repo but is fiddly enough to be worth writing down.
@@ -10,6 +10,7 @@ this repo but is fiddly enough to be worth writing down.
 | `magisk/launcher/`       | Unlocks tiles, skips the activation screen, keeps the browser on.   |
 | `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
 | `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
+| `lsposed/settings-light/` | Keeps the Settings app in light mode while the rest stays dark.     |
 
 <details>
 <summary><b>The phone</b></summary>
@@ -459,5 +460,70 @@ regardless.
 
 Disable the module in the LSPosed manager (or `adb uninstall com.amber.dumbdownunhide`) and
 force-stop the launcher again.
+
+</details>
+
+<details>
+<summary><b>Keep Settings in light mode (LSPosed)</b></summary>
+
+### Why
+
+With Android's dark mode on, TCL's Settings app (`com.android.settings`, from
+`/system/priv-app/TctSettings`) turns its backgrounds dark gray but keeps most of its text black.
+Some of that black comes from resources with no dark-mode version (the row selector
+`drawable/preference_text_color`). The rest is hardcoded: `com.tct.TctPreference` and about 25
+similar row classes call `setTextColor(0xFF000000)` in `onFocusChange`, so even fixed rows go
+black again once you scroll past them. Patching that screen by screen doesn't scale, so this
+module keeps Settings in light mode and leaves dark mode on for everything else.
+
+### How
+
+Android 11 has no per-app dark mode setting, so
+[`lsposed/settings-light/`](lsposed/settings-light) does it from inside the app.
+[`LightModeHook.java`](lsposed/settings-light/src/com/amber/settingslight/LightModeHook.java) hooks
+`android.content.res.ResourcesImpl.updateConfiguration`, which every `Resources` object in the
+process goes through when it's created and on each configuration change. When the configuration
+says night mode, the hook passes on a copy that says day instead. Settings then resolves its normal
+light colors, drawables and themes everywhere, including screens nobody has checked. Only the
+Settings process is affected, and no Settings class names are involved, so a Settings update
+doesn't break it.
+
+### Build
+
+[`build.sh`](lsposed/settings-light/build.sh) works like the unhide module's: Android SDK only,
+with the Xposed API as compile-only stubs, signed with your debug keystore. A prebuilt
+`settings-light.apk` is committed.
+
+```bash
+lsposed/settings-light/build.sh
+```
+
+### Install
+
+```bash
+adb install lsposed/settings-light/settings-light.apk
+adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
+```
+
+In the manager: **Modules → Settings Light Mode → Enable module**, with only **Settings**
+(`com.android.settings`) ticked in the scope list. Then restart Settings:
+
+```bash
+adb shell am force-stop com.android.settings
+```
+
+### Verify
+
+```bash
+adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep SettingsLight
+```
+
+You should see `hooked ResourcesImpl.updateConfiguration` and, with dark mode on,
+`forced light mode` each time Settings starts.
+
+### Revert
+
+Disable the module in the LSPosed manager (or `adb uninstall com.amber.settingslight`) and
+force-stop Settings.
 
 </details>
