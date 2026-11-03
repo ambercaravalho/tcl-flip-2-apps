@@ -10,7 +10,7 @@ this repo but is fiddly enough to be worth writing down.
 | `magisk/launcher/`       | Unlocks tiles, skips the activation screen, keeps the browser on.   |
 | `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
 | `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
-| `lsposed/settings-light/` | Keeps the Settings app in light mode while the rest stays dark.     |
+| `lsposed/tcl-tweaks/`    | Keeps Settings in light mode, hides the "fully charged" notice.     |
 
 <details>
 <summary><b>The phone</b></summary>
@@ -464,9 +464,13 @@ force-stop the launcher again.
 </details>
 
 <details>
-<summary><b>Keep Settings in light mode (LSPosed)</b></summary>
+<summary><b>TCL Tweaks: Settings in light mode, no "fully charged" notification (LSPosed)</b></summary>
 
-### Why
+[`lsposed/tcl-tweaks/`](lsposed/tcl-tweaks) holds small fixes for TCL's own system apps. Each fix
+is a separate hook class listed in `assets/xposed_init`, and each one only runs in its own app's
+process.
+
+### Settings in light mode
 
 With Android's dark mode on, TCL's Settings app (`com.android.settings`, from
 `/system/priv-app/TctSettings`) turns its backgrounds dark gray but keeps most of its text black.
@@ -476,11 +480,8 @@ similar row classes call `setTextColor(0xFF000000)` in `onFocusChange`, so even 
 black again once you scroll past them. Patching that screen by screen doesn't scale, so this
 module keeps Settings in light mode and leaves dark mode on for everything else.
 
-### How
-
-Android 11 has no per-app dark mode setting, so
-[`lsposed/settings-light/`](lsposed/settings-light) does it from inside the app.
-[`LightModeHook.java`](lsposed/settings-light/src/com/amber/settingslight/LightModeHook.java) hooks
+Android 11 has no per-app dark mode setting, so this is done from inside the app.
+[`LightModeHook.java`](lsposed/tcl-tweaks/src/com/amber/tcltweaks/LightModeHook.java) hooks
 `android.content.res.ResourcesImpl.updateConfiguration`, which every `Resources` object in the
 process goes through when it's created and on each configuration change. When the configuration
 says night mode, the hook passes on a copy that says day instead. Settings then resolves its normal
@@ -488,42 +489,61 @@ light colors, drawables and themes everywhere, including screens nobody has chec
 Settings process is affected, and no Settings class names are involved, so a Settings update
 doesn't break it.
 
+### No "Battery is fully charged" notification
+
+Whenever the battery reaches 100% on a charger, SystemUI (`/system/priv-app/JoySystemUI`) posts
+"Battery full / Battery is fully charged." (notification id 3000), plays a chime and vibrates. It
+all happens in `BatteryControllerImpl.showBatteryFullNotification`. No setting turns the
+notification off: `charging_sounds_enabled` only silences the chime. Blocking its channel isn't an
+option either, because that channel (`BAT`) also carries the low-battery, battery saver and
+"non-standard charger" warnings.
+[`BatteryFullHook.java`](lsposed/tcl-tweaks/src/com/amber/tcltweaks/BatteryFullHook.java) skips
+that one method and clears the notification if it's already showing. The other battery warnings
+are unaffected.
+
 ### Build
 
-[`build.sh`](lsposed/settings-light/build.sh) works like the unhide module's: Android SDK only,
+[`build.sh`](lsposed/tcl-tweaks/build.sh) works like the unhide module's: Android SDK only,
 with the Xposed API as compile-only stubs, signed with your debug keystore. A prebuilt
-`settings-light.apk` is committed.
+`tcl-tweaks.apk` is committed.
 
 ```bash
-lsposed/settings-light/build.sh
+lsposed/tcl-tweaks/build.sh
 ```
 
 ### Install
 
 ```bash
-adb install lsposed/settings-light/settings-light.apk
+adb install lsposed/tcl-tweaks/tcl-tweaks.apk
 adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
 ```
 
-In the manager: **Modules → Settings Light Mode → Enable module**, with only **Settings**
-(`com.android.settings`) ticked in the scope list. Then restart Settings:
+In the manager: **Modules → TCL Tweaks → Enable module**, with **Settings**
+(`com.android.settings`) and **System UI** (`com.android.systemui`) ticked in the scope list. Then
+restart both:
 
 ```bash
 adb shell am force-stop com.android.settings
+adb shell su -c 'kill $(pidof com.android.systemui)'
 ```
+
+If you installed the older Settings Light Mode module (`com.amber.settingslight`), uninstall it;
+TCL Tweaks replaces it.
 
 ### Verify
 
 ```bash
-adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep SettingsLight
+adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep TclTweaks
 ```
 
-You should see `hooked ResourcesImpl.updateConfiguration` and, with dark mode on,
-`forced light mode` each time Settings starts.
+You should see `hooked showBatteryFullNotification` when SystemUI starts, and
+`hooked ResourcesImpl.updateConfiguration` plus (with dark mode on) `forced light mode` each time
+Settings starts.
 
 ### Revert
 
-Disable the module in the LSPosed manager (or `adb uninstall com.amber.settingslight`) and
-force-stop Settings.
+Disable the module in the LSPosed manager (or `adb uninstall com.amber.tcltweaks`), then
+force-stop Settings and restart SystemUI. To keep just one fix, untick the other app in the
+module's scope list.
 
 </details>

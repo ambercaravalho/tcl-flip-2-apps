@@ -1,4 +1,4 @@
-package com.amber.settingslight;
+package com.amber.tcltweaks;
 
 import android.content.res.Configuration;
 
@@ -24,7 +24,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class LightModeHook implements IXposedHookLoadPackage {
 
     private static final String SETTINGS = "com.android.settings";
-    private static final String TAG = "SettingsLight: ";
+    private static final String TAG = "TclTweaks: ";
 
     private static final AtomicBoolean loggedFirstForce = new AtomicBoolean();
 

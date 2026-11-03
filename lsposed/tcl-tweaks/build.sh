@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds settings-light.apk with plain SDK tools - no Gradle, no Maven.
+# Builds tcl-tweaks.apk with plain SDK tools - no Gradle, no Maven.
 #
 # The Xposed API classes under stubs/ are compile-only: they are on javac's
 # classpath but never dexed, because LSPosed supplies the real ones at runtime
@@ -19,7 +19,7 @@ KS_ALIAS=${KS_ALIAS:-androiddebugkey}
 KS_PASS=${KS_PASS:-android}
 export KS_PASS
 
-OUT=settings-light.apk
+OUT=tcl-tweaks.apk
 B=build
 
 for f in "$BT/d8" "$BT/aapt2" "$BT/zipalign" "$BT/apksigner" "$ANDROID_JAR" "$KEYSTORE"; do
