@@ -1,306 +1,232 @@
 # tcl-flip-2-apps
 
-Fixes for the TCL Flip 2 / TCL Flip Go, packaged as two Magisk modules and two LSPosed modules.
-Also links to the official releases of the phone's stock offlineinc apps so they can be reinstalled
-if you remove or break one, and notes on getting microG onto the phone, which needs no code from
-this repo but is fiddly enough to be worth writing down.
+Fixes for the TCL Flip 2 / TCL Flip Go, a flip phone running Android 11 with the locked-down
+**DumbDown Launcher**. Everything here needs a rooted phone with Magisk. The LSPosed modules also
+need LSPosed, which is set up in [microG and LSPosed](#microg-and-lsposed).
 
-| Path                     | What it is                                                          |
-| ------------------------ | ------------------------------------------------------------------- |
-| `magisk/launcher/`       | Unlocks tiles, skips the activation screen, keeps the browser on.   |
-| `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
-| `lsposed/unhide-apps/`   | Launcher: shows Magisk and Chrome, hides tiles, more cursor apps.   |
-| `lsposed/tcl-tweaks/`    | Settings and browser stay light; hides the "fully charged" notice.  |
+| Module                  | Type    | What it does                                                                     |
+| ----------------------- | ------- | -------------------------------------------------------------------------------- |
+| `magisk/launcher/`      | Magisk  | Unlocks every launcher tile, skips activation, keeps the browser enabled.        |
+| `magisk/lsposed-notif/` | Magisk  | Removes the permanent "LSPosed loaded" notification.                             |
+| `magisk/webview/`       | Magisk  | Lets apps use Google's up-to-date WebView instead of the stock one from 2020.    |
+| `lsposed/unhide-apps/`  | LSPosed | Shows Magisk and the browser, hides unused tiles, adds cursor apps.              |
+| `lsposed/tcl-tweaks/`   | LSPosed | Keeps Settings and the browser light, drops the "fully charged" notification.    |
 
-<details>
-<summary><b>The phone</b></summary>
+## Installing
 
-The TCL Flip 2 (model `4058G`) and the TCL Flip Go are cheap flip phones with a 240x320 screen.
-They look like feature phones but run Android 11 (SDK 30), and the home screen is **DumbDown
-Launcher** (`com.offlineinc.dumbdownlauncher`) — a locked-down launcher that only shows the apps
-your plan is supposed to include. Two companion apps ship with it: DumbTT9
-(`com.offlineinc.dumbtt9`, the T9 keyboard) and Voice to Text (`com.offlineinc.voicetotext`).
-
-To reinstall a stock app, download its APK from the official releases and `adb install` it (each
-package is a single APK, so no split-APK tooling is needed):
-
-| App               | Package                           | Releases                                                                                   |
-| ----------------- | --------------------------------- | ------------------------------------------------------------------------------------------ |
-| DumbDown Launcher | `com.offlineinc.dumbdownlauncher` | [Offline-DC/dumb-down-launcher](https://github.com/Offline-DC/dumb-down-launcher/releases) |
-| DumbTT9           | `com.offlineinc.dumbtt9`          | [Offline-DC/dumbtt9](https://github.com/Offline-DC/dumbtt9/releases)                       |
-| Voice to Text     | `com.offlineinc.voicetotext`      | [Offline-DC/voicetotextapp](https://github.com/Offline-DC/voicetotextapp/releases)         |
-
-Each release lists its `sha256`; check it with `shasum -a 256` before installing. Releases marked
-*Pre-release* are beta builds, so take the one tagged *Latest* unless you want the beta channel.
-
-</details>
-
-<details>
-<summary><b>Magisk modules</b></summary>
-
-### Launcher module: `magisk/launcher/`
-
-Nothing is patched inside the APK. The launcher already knows how to be "unlocked and
-activated" — it writes those values itself when pairing succeeds, or when you tap *skip pairing*
-/ *skip setup*. This module just writes them for you.
-
-At every boot, `[service.sh](magisk/launcher/service.sh)` waits for the phone to be unlocked
-(the launcher's settings aren't readable before that), then sets six switches in its
-SharedPreferences:
-
-- `has_subscription=true`, `hide_smart_txt=false`, `hide_audio_bundle=false` — every tile
-becomes openable. To hide tiles you don't use, see the LSPosed module below.
-- `is_paired=true`, `device_registered=true`, `setup_skipped=true` — the launcher considers
-activation done, so it boots straight to the home grid instead of the SIM-check screen.
-
-It also keeps the browser around. Since v6.50.0 the launcher switches every browser off once at
-start-up (`pm disable-user` on `com.android.chrome` and `org.chromium.chrome`), and a disabled app
-vanishes from the drawer no matter what the LSPosed module below unhides. The launcher records
-that it's done this as `browser_disabled_once` in `launcher_prefs`, so the module sets that to
-`true` and the switch-off never runs. If a browser is disabled anyway — the launcher got there
-first after a data wipe, or you used *browser off* on the launcher's diagnostics screen — the
-module runs `pm enable` on it at the next boot.
-
-If anything changed, it force-stops the launcher so it reloads the new values. It only edits
-files that already exist and only rewrites when the contents actually differ, so repeated boots
-are harmless.
-
-The second half is `[system/etc/hosts](magisk/launcher/system/etc/hosts)`, which points the dead
-backend at `127.0.0.1`. The launcher keeps retrying that server in the background, and when the
-request fails outright it takes an error path that leaves the existing settings untouched. That
-guarantees nothing can ever re-lock your tiles, even if the host comes back one day.
-
-A log of what the module did each boot lands in `/data/local/tmp/dumbdown_plan_unlock.log`.
-
-#### Install
+**Magisk modules.** Zip the module folder, install it with Magisk and reboot:
 
 ```bash
-cd magisk/launcher && zip -r ../../launcher-module.zip . && cd ../..
-adb push launcher-module.zip /data/local/tmp/
-adb shell su -c 'magisk --install-module /data/local/tmp/launcher-module.zip'
+cd magisk/launcher && zip -r ../../module.zip . && cd ../..
+adb push module.zip /data/local/tmp/
+adb shell su -c 'magisk --install-module /data/local/tmp/module.zip'
 adb reboot
 ```
 
-If Magisk only extracts `module.prop` (it has done this on this device), copy `service.sh` and
-`system/etc/hosts` into `/data/adb/modules/dumbdown_plan_unlock/` by hand and
-`chmod 0644 service.sh`.
+To remove one, delete it in the Magisk app and reboot.
 
-#### Revert
-
-Remove the module in the Magisk app, or delete `/data/adb/modules/dumbdown_plan_unlock`, then
-reboot. The launcher keeps whatever settings were last written; delete
-`/data/data/com.offlineinc.dumbdownlauncher/shared_prefs/device_pairing.xml` for a clean slate.
-
-### LSPosed status notification module: `magisk/lsposed-notif/`
-
-Once LSPosed is installed (see microG support below) it posts a permanent, unswipeable
-**LSPosed loaded** notification. It's meant as the entry point to the parasitic manager, but on
-this phone the manager is already a real app, so the notification is pure noise. The manager has
-a *Status Notification* toggle to turn it off — except it's greyed out until you first create a
-launcher shortcut, and DumbDown Launcher (`com.flipos.launcher`) can't pin shortcuts, so you're
-stuck.
-
-Fighting it at the Android layer is a dead end: the notification lives on the `lsposed_status`
-channel owned by the `android` package, which this ROM marks non-blockable (so its Settings
-toggle is greyed too), and LSPosed re-asserts the channel at `IMPORTANCE_MIN` on every boot —
-overriding even a user-locked `IMPORTANCE_NONE`.
-
-The toggle just writes one value, though. LSPosed keeps its framework prefs in the SQLite DB
-`/data/adb/lspd/config/modules_config.db`, and reads `enable_status_notification` at
-`BOOT_COMPLETED` (`LSPosedService.dispatchBootCompleted`): when it's `false` it *cancels* the
-notification instead of posting it. So this module just sets that value. At `post-fs-data` (before
-`system_server` starts, so the DB is not open by anyone)
-[`post-fs-data.sh`](magisk/lsposed-notif/post-fs-data.sh) runs a small helper that writes the row
-`('lspd', 0, 'config', 'enable_status_notification', <Boolean.FALSE>)`. The value is a serialized
-`java.lang.Boolean` (LSPosed stores config via Java `ObjectOutputStream`), so the helper writes
-the exact bytes `writeObject(Boolean.FALSE)` produces. It's idempotent, and re-applies the setting
-if LSPosed is ever reinstalled or its config reset. The scope-request and module-update
-notifications are left alone.
-
-There is no `sqlite3` on the device and no way to hand-edit a SQLite b-tree safely, so the writer
-is a tiny native binary, [`lspd_status_notif`](magisk/lsposed-notif/lspd_status_notif), built from
-[`src/lspd_status_notif.c`](magisk/lsposed-notif/src/lspd_status_notif.c) linked against the
-official SQLite amalgamation. It's a fully static `armeabi-v7a` musl build, which runs on Android
-via the kernel syscall ABI without needing bionic. Rebuild it with [zig](https://ziglang.org)
-(no Android NDK required):
+**LSPosed modules.** Install the prebuilt APK, then open the LSPosed manager:
 
 ```bash
-curl -sO https://www.sqlite.org/2024/sqlite-amalgamation-3470200.zip
-unzip -q sqlite-amalgamation-3470200.zip
+adb install lsposed/unhide-apps/dumbdown-unhide.apk
+adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
+```
+
+In **Modules**, enable the module and tick the apps listed under its scope below. Then restart
+those apps or reboot. To remove one, disable it in the manager or uninstall it.
+
+**Rebuilding.** The prebuilt APKs and binaries are committed. Each module with source code has a
+`build.sh` that only needs the Android SDK (build-tools 36, platform 36) and a JDK 11+, and signs
+with your debug keystore. The LSPosed notification helper is C, built with [zig](https://ziglang.org):
+
+```bash
+curl -sO https://www.sqlite.org/2024/sqlite-amalgamation-3470200.zip && unzip -q sqlite-amalgamation-3470200.zip
 zig cc -target arm-linux-musleabihf -O2 -static -s \
   -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_DQS=0 \
-  -I sqlite-amalgamation-3470200 \
-  magisk/lsposed-notif/src/lspd_status_notif.c sqlite-amalgamation-3470200/sqlite3.c \
-  -o magisk/lsposed-notif/lspd_status_notif
+  -I sqlite-amalgamation-3470200 magisk/lsposed-notif/src/lspd_status_notif.c \
+  sqlite-amalgamation-3470200/sqlite3.c -o magisk/lsposed-notif/lspd_status_notif
 ```
 
-The binary takes an optional argument: `lspd_status_notif 0` disables the notification (default),
-`lspd_status_notif 1` re-enables it, and an optional second argument overrides the DB path.
+## Magisk modules
 
-#### Install
+### Launcher unlock: `magisk/launcher/`
+
+The launcher locks most of its tiles behind a subscription and a pairing step whose server no
+longer exists. At every boot, this module writes the launcher's own settings so it believes the
+subscription is active and setup is done. Every tile opens, and the phone boots straight to the
+home screen. It also blocks the dead server, so nothing can re-lock the tiles later.
+
+Since v6.50.0 the launcher also disables the browser once. The module stops that from happening,
+and re-enables the browser at the next boot if it was disabled anyway.
+
+Log: `/data/local/tmp/dumbdown_plan_unlock.log`. Removing the module leaves the last settings in
+place; delete `/data/data/com.offlineinc.dumbdownlauncher/shared_prefs/device_pairing.xml` for a
+clean start.
+
+### LSPosed notification off: `magisk/lsposed-notif/`
+
+LSPosed posts a permanent "LSPosed loaded" notification. The manager has a switch to turn it off,
+but on this phone the switch is greyed out. This module sets that switch directly in LSPosed's
+settings at boot. Other LSPosed notifications are unaffected.
+
+Log: `/data/local/tmp/lsposed_notif_off.log`. The setting stays after you remove the module. To get
+the notification back, run `lspd_status_notif 1` once, or turn it on again in the manager.
+
+### Google WebView: `magisk/webview/`
+
+Apps that show web pages use the system WebView. The phone's is version 83 from 2020, which some
+sites refuse; Proton Mail's settings pages, for example, say the browser is out of date. The stock
+WebView can't be updated, so this module lets Google's **Android System WebView** take over. It
+doesn't need Google Play services, and the stock WebView stays as the fallback.
+
+1. Install Android System WebView from Aurora Store. Aurora's search only shows the beta, dev and
+   canary versions, so open the stable one directly:
+
+   ```bash
+   adb shell am start -a android.intent.action.VIEW -d 'market://details?id=com.google.android.webview' com.aurora.store
+   ```
+
+2. Install this module and reboot.
+3. Check: `adb shell dumpsys webviewupdate | grep Current` should name `com.google.android.webview`.
+
+Aurora Store keeps it updated from then on. Removing the module switches back to the stock WebView.
+
+## LSPosed modules
+
+### DumbDown App Visibility: `lsposed/unhide-apps/`
+
+**Scope:** DumbDown Launcher.
+
+The launcher decides what appears in its app drawer and home grid, and which apps get the
+on-screen cursor. This module changes those choices. Each one is a list at the top of
+[`UnhideHook.java`](lsposed/unhide-apps/src/com/amber/dumbdownunhide/UnhideHook.java). Edit the
+lists, rebuild, reinstall and restart the launcher.
+
+- **`UNHIDE`**: apps the launcher deliberately hides, to show anyway. Currently Magisk, Chrome and
+  Chromium.
+- **`HIDE`**: tiles to hide. Currently dumb keys, 2-factor auth, device setup, rideshare, signal
+  (the launcher's own client, not the Signal app), smart cal, free up space, smart txt and contact
+  sync. Hiding dumb keys only hides its settings tile; the keyboard keeps working.
+- **`RENAME`**: tiles to relabel. Currently smart music becomes "spotify".
+- **`MOUSE_APPS`**: apps that turn the cursor on when opened from the launcher, like the browser
+  does. Currently Aurora Store, Immich, K-9 Mail, LSPosed, Lyft, Magisk, My Tello, Pebble, Proton
+  Mail, Signal and Telegram.
+
+The launcher's code is obfuscated and changes with every update, so the module finds what it needs
+by content rather than by name, which usually survives updates. If an update does break a step,
+the log says `not found`, and the other steps keep working:
 
 ```bash
-cd magisk/lsposed-notif && zip -r ../../lsposed-notif-module.zip . && cd ../..
-adb push lsposed-notif-module.zip /data/local/tmp/
-adb shell su -c 'magisk --install-module /data/local/tmp/lsposed-notif-module.zip'
-adb reboot
+adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep DumbDownUnhide
 ```
 
-Like the launcher module, Magisk on this device sometimes stages only `module.prop` on the first
-`--install-module` and finalizes the rest on reboot; if the module folder under
-`/data/adb/modules/lsposed_notif_off/` is missing `post-fs-data.sh` or `lspd_status_notif` after
-that, copy them in by hand and `chmod 0755 lspd_status_notif`. A log of each boot's result lands in
-`/data/local/tmp/lsposed_notif_off.log`.
+### TCL Tweaks: `lsposed/tcl-tweaks/`
 
-#### Revert
+**Scope:** Settings, System UI and Browser. Untick an app to drop its fix.
 
-Remove the module in the Magisk app (or delete `/data/adb/modules/lsposed_notif_off` and reboot).
-The `enable_status_notification=false` value stays in LSPosed's config after removal, so to bring
-the notification back either run `lspd_status_notif 1` once or toggle *Status Notification* back on
-in the manager.
+- **Settings stays in light mode.** TCL's dark mode for Settings is only half done, leaving black
+  text on dark backgrounds, so Settings stays light while the rest of the phone is dark.
+- **The browser stays in light mode.** Its dark mode has the same problem, so the module sets the
+  browser's own Theme setting to Light every time it starts.
+- **No "Battery is fully charged" notification.** Low-battery and battery saver warnings still
+  show.
 
-</details>
+Log: `adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep TclTweaks`. This module
+replaces the older Settings Light Mode module (`com.amber.settingslight`); uninstall that one if
+you have it.
+
+## Troubleshooting
+
+**Magisk only installed `module.prop`.** This happens on this phone now and then. Copy the rest of
+the module's files into `/data/adb/modules/<module id>/` by hand (the id is in `module.prop`), run
+`chmod 0755` on any binaries, and reboot.
+
+**The cursor stopped working after restarting the launcher.** Force-stopping the launcher kills its
+cursor service, and Android doesn't restart it. Reboot, or:
+
+```bash
+adb shell su -c 'settings delete secure enabled_accessibility_services && settings put secure enabled_accessibility_services com.offlineinc.dumbdownlauncher/com.offlineinc.dumbdownlauncher.MouseAccessibilityService && settings put secure accessibility_enabled 1'
+```
+
+**Web pages draw partly or entirely white.** Logos, icons or even text go missing. The phone's GPU
+driver sometimes chokes on cached graphics data, and clearing the cache fixes it. For the browser:
+
+```bash
+adb shell am force-stop org.chromium.chrome
+adb shell su -c 'cd /data/data/org.chromium.chrome/app_chrome && rm -rf ShaderCache GrShaderCache GraphiteDawnCache Default/GPUCache Default/DawnCache'
+```
+
+For web pages inside another app, force-stop that app and delete
+`/data/data/<app package>/app_webview/Default/GPUCache`.
+
+**Tapping through screens over adb.** There's no touchscreen, but injected taps work. Find
+coordinates with `adb shell uiautomator dump /sdcard/ui.xml && adb shell cat /sdcard/ui.xml`
+(look for `bounds=`), then `adb shell input tap X Y`.
+
+## microG and LSPosed
 
 <details>
-<summary><b>microG support</b></summary>
+<summary><b>Setup steps</b></summary>
 
-The phone ships with no Google code at all — no Play Services, no Play Store, no Services
-Framework. That is a feature until you sideload something that expects them: Uber Lite wants
-Maps, and anything built on Firebase has no route for push notifications.
+The phone has no Google services, so apps that need them (Uber Lite, push notifications) don't
+work. [microG](https://microg.org) replaces them, but it needs *signature spoofing*, which the stock
+ROM lacks. LSPosed with the FakeGApps module adds it. Nothing here is in this repo; download:
 
-[microG](https://microg.org) fills that gap, but it has to be convincing. Apps don't just look
-for the package name `com.google.android.gms` — the Play Services client library checks the
-signing certificate too, and microG is signed by the NOGAPPS Project. So the system has to be
-persuaded to report Google's certificate on microG's behalf. That is *signature spoofing*, and
-most custom ROMs have it built in. Stock TCL does not, so it gets bolted on with Xposed.
+- **GmsCore** and **Companion** from `microg` on GitHub
+- **`microg_installer_revived_again`** from `spacealtctrl`
+- **LSPosed v1.11.0** from `JingMatrix`. Not Vector: Vector v2.x says "Activated" but never loads
+  any modules.
+- **FakeGApps 6.6** from `whew-inc`
 
-Two halves, then: get microG in as a privileged system app, then make the framework lie about
-its signature. Nothing here lives in this repo; it's all upstream downloads.
-
-| Piece                            | From (GitHub)  | Why                                                   |
-| -------------------------------- | -------------- | ----------------------------------------------------- |
-| GmsCore + Companion              | `microg`       | microG itself, plus a `com.android.vending` stub.     |
-| `microg_installer_revived_again` | `spacealtctrl` | Moves both into `priv-app` with the right allowlists. |
-| LSPosed **v1.11.0**              | `JingMatrix`   | Xposed framework — see the version warning below.     |
-| FakeGApps 6.6                    | `whew-inc`     | The hook that actually does the spoofing.             |
-
-### Install microG as a system app
-
-Check what you downloaded before installing it — microG's GitHub releases have a history of
-being served truncated, and a corrupt APK here fails in confusing ways:
+**1. Install microG as a system app.** First check the download wasn't truncated (microG's releases
+have a history of that). The signer should be `O=NOGAPPS Project`:
 
 ```bash
 unzip -p com.google.android.gms-*.apk META-INF/CERT.RSA \
-  | openssl pkcs7 -inform DER -print_certs -outform PEM \
-  | openssl x509 -noout -subject -fingerprint -sha256
-# O=NOGAPPS Project, 9B:D0:67:27:...:95:D1:41:65
+  | openssl pkcs7 -inform DER -print_certs | openssl x509 -noout -subject
 ```
 
-That fingerprint is the same key microG publishes for its F-Droid repo, and the Companion APK is
-signed with it too.
-
-Install both as ordinary user apps **first**. This isn't optional — the module's `customize.sh`
-promotes whatever it finds already installed, so with nothing to find it installs a do-nothing
-module and cheerfully reports success.
+Install both APKs as normal apps *before* the module, because the module only promotes what's
+already installed:
 
 ```bash
-adb install com.google.android.gms-250932030.apk    # ~101 MB, takes a while
+adb install com.google.android.gms-250932030.apk
 adb install com.android.vending-84022630.apk
 adb push microg_installer_revived_again-v1.1.2.zip /data/local/tmp/
 adb shell su -c 'magisk --install-module /data/local/tmp/microg_installer_revived_again-v1.1.2.zip'
 adb reboot
 ```
 
-The module copies both APKs to `system/product/priv-app/`, which Magisk maps onto the real
-`/product` without touching the original partition, and adds the supporting files microG
-needs as a privileged app: `privapp-permissions-*.xml` allowlists, GsfProxy for old apps that
-still ask for `com.google.android.gsf`, Maps v1, and a sysconfig file exempting microG from
-power-save so push survives Doze.
-
-After the reboot:
-
-```bash
-adb shell su -c 'pm dump com.google.android.gms' | grep -E 'flags=|privateFlags='
-```
-
-You want `SYSTEM … UPDATED_SYSTEM_APP` and `PRIVILEGED PRODUCT`. `codePath` still points into
-`/data/app` and that's correct — the copy you installed by hand counts as an update to the
-system app and keeps the privileged flags.
-
-This ROM sets `ro.control_privapp_permissions=enforce`, which on some builds bootloops when a
-privileged app requests a permission that isn't allowlisted. It's a `user` build, so a mismatch
-only logs a warning. Worth knowing before you edit those XMLs.
-
-### Add signature spoofing
-
-Zygisk first. Nested quotes get mangled on the way through `su -c`, so
-[`enable_zygisk.sh`](microg/enable_zygisk.sh) wraps the statement in a file rather than fighting
-the escaping — push it and run it:
+**2. Enable Zygisk, then install LSPosed and FakeGApps:**
 
 ```bash
 adb push microg/enable_zygisk.sh /data/local/tmp/
 adb shell su -c 'sh /data/local/tmp/enable_zygisk.sh'
 adb reboot
-```
-
-**Use LSPosed v1.11.0, not Vector.** JingMatrix renamed the fork to Vector at v2.0. Vector v2.1
-installs fine and the manager even reports "Activated", but it throws
-`NoClassDefFoundError: xposed.dummy.XResourcesSuperClass` on every process fork and never loads
-a single module — spoofing just silently doesn't happen, with no obvious symptom except a failing
-self-check. v1.11.0 is the last LSPosed-branded release and works.
-
-```bash
 adb push LSPosed-v1.11.0-7209-zygisk-release.zip /data/local/tmp/
 adb shell su -c 'magisk --install-module /data/local/tmp/LSPosed-v1.11.0-7209-zygisk-release.zip'
-adb install app-release.apk      # FakeGApps 6.6
+adb install app-release.apk      # FakeGApps
 adb reboot
 ```
 
-LSPosed normally opens its manager from a notification, using a parasitic manager that avoids
-installing a visible app. On this phone that notification dies inside MediaTek's
-`AsyncDrawableCache`, and the `*#*#5776733#*#*` secret code does nothing. Install the manager
-out of the module zip instead:
+LSPosed's usual way into its manager (a notification) doesn't work on this phone, so install the
+manager from the LSPosed zip:
 
 ```bash
-unzip -j LSPosed-v1.11.0-7209-zygisk-release.zip manager.apk
-adb install manager.apk
+unzip -j LSPosed-v1.11.0-7209-zygisk-release.zip manager.apk && adb install manager.apk
 adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
 ```
 
-In the manager: **Modules → FakeGapps → Enable module**, then tick **System Framework** in the
-scope list underneath. Nothing else — the hook belongs in `system_server`, not in individual
-apps. Reboot.
+In the manager, enable **FakeGapps** with only **System Framework** ticked, and reboot.
 
-There's no touchscreen, but injected taps still work. Read coordinates out of the view tree
-rather than guessing from screenshots:
-
-```bash
-adb shell uiautomator dump /sdcard/ui.xml && adb shell cat /sdcard/ui.xml   # grep for bounds=
-adb shell input tap 120 188
-```
-
-### Verify
-
-The module log tells you whether the hook is live at all:
-
-```bash
-adb shell su -c 'cat /data/adb/lspd/log/modules_*.log'
-```
-
-It should mention `Loading legacy module inc.whew.android.fakegapps` and
-`Loading class inc.whew.android.fakegapps.FakeSignatures`. A log with nothing but the watchdog
-header means no module ran and nothing is being spoofed — that's the Vector failure above.
-
-Then microG's own self-check, which is the authoritative answer:
+**3. Check and finish.** Open microG's settings; under *Self-Check*, "System spoofs signature" must
+be ticked:
 
 ```bash
 adb shell am start -n com.google.android.gms/org.microg.gms.ui.SettingsActivity
 ```
 
-Open *Self-Check*; the first row, "System spoofs signature", has to be ticked.
-
-Grant location by hand. The module ships a `default-permissions` file, but that only applies to
-apps installed after it, and microG went on first:
+Grant microG location access, which it doesn't get automatically:
 
 ```bash
 for p in ACCESS_COARSE_LOCATION ACCESS_FINE_LOCATION ACCESS_BACKGROUND_LOCATION; do
@@ -308,309 +234,24 @@ for p in ACCESS_COARSE_LOCATION ACCESS_FINE_LOCATION ACCESS_BACKGROUND_LOCATION;
 done
 ```
 
-Two things that surprise people afterwards. DumbDown Launcher won't show microG or the LSPosed
-manager, so `am start` is the only way back into either. And push notifications still won't
-arrive until you enable Device Registration and Cloud Messaging in microG's settings — that
-registers the phone with Google, so it's deliberately off until you choose it.
+For push notifications, turn on Device Registration and Cloud Messaging in microG's settings. The
+launcher doesn't show microG or the LSPosed manager, so open them with the `am start` commands
+above.
 
-### Revert
-
-Remove `microg_installer_revived_again` and `zygisk_lsposed` in the Magisk app, or delete their
-directories under `/data/adb/modules/` and reboot. Then clear the user-installed halves:
-
-```bash
-adb uninstall com.google.android.gms
-adb uninstall com.android.vending
-adb uninstall inc.whew.android.fakegapps
-adb uninstall org.lsposed.manager
-```
-
-Set `zygisk` back to `0` the same way you set it, if nothing else needs it. Neither module ever
-writes to the real `/system` or `/product`, so pulling them restores the stock partitions
-exactly.
+**Removing it:** delete `microg_installer_revived_again` and `zygisk_lsposed` in Magisk, reboot,
+then `adb uninstall` `com.google.android.gms`, `com.android.vending`,
+`inc.whew.android.fakegapps` and `org.lsposed.manager`.
 
 </details>
 
-<details>
-<summary><b>Show and hide launcher apps, cursor on launch (LSPosed)</b></summary>
+## Stock apps
 
-### Unhiding denylisted apps
+To reinstall one of the phone's own apps, download it from the official releases and
+`adb install` it. Each release lists a `sha256` to check. Take the release tagged *Latest*, not a
+*Pre-release*.
 
-DumbDown Launcher's app drawer lists every app with a launcher icon, minus a hardcoded set of 28
-package names in `AllAppsActivity` — Magisk, Chrome, the stock dialer and contacts (replaced by
-the launcher's own screens), OpenBubbles, a pile of MediaTek and carrier tools, and the launcher
-itself. The home grid is built from the drawer's list, so an app on that set can't be pinned
-either. Because the list is compiled into the app, no settings change can lift it.
-
-The set is an ordinary Java `Set` that the launcher re-reads every time it rebuilds the drawer,
-though. [`lsposed/unhide-apps/`](lsposed/unhide-apps) is a tiny LSPosed module that runs inside
-the launcher's process at startup and removes entries from it.
-[`UnhideHook.java`](lsposed/unhide-apps/src/com/amber/dumbdownunhide/UnhideHook.java) finds the
-set by content rather than by its obfuscated field name (`z0` in the current build), so a
-launcher update that renames fields doesn't break it. The packages it unhides are the `UNHIDE`
-array at the top of that file: `com.topjohnwu.magisk`, `com.android.chrome` and
-`org.chromium.chrome`. Add more there and rebuild.
-
-### Hiding tiles
-
-Going the other way, adding entries to that set only works for real installed apps. Most of the
-launcher's tiles are virtual — built-in screens with IDs like `__QUACK__` that it appends to the
-list *after* the denylist has been applied. So the module hides tiles one step later instead.
-Every tile list the launcher builds (the drawer, and the default home grid) ends with the same
-subscription-lock pass (`bc.f1.a` in v6.51.0), and the hook drops hidden tiles from what it
-returns. One background task (`bc.k`) bypasses that: it adds tiles (quack, contact sync) straight into the open
-drawer's on-screen list and into the drawer cache that the home grid reads. So after each run the
-hook removes hidden tiles from both — from the on-screen list in place, since the drawer is
-watching that exact list object.
-
-The hidden tiles are the `HIDE` set in `UnhideHook.java`, matched on each tile's ID:
-
-| Tile          | ID                                                                  |
-| ------------- | ------------------------------------------------------------------- |
-| dumb keys     | `com.offlineinc.dumbtt9` (the DumbTT9 keyboard's settings app)      |
-| 2-factor auth | `__TWO_FACTOR__`                                                    |
-| device setup  | `__DEVICE_SETUP__`                                                  |
-| rideshare     | `__DUMB_RIDE__`                                                     |
-| signal        | `__DUMB_SIGNAL__` (the launcher's own client, not Signal's app)     |
-| smart cal     | `__CALENDAR__`                                                      |
-| free up space | `__FREE_UP_SPACE__`                                                 |
-| smart txt     | `com.openbubbles.messaging` or `__GOOGLE_MESSAGES__`, per platform  |
-| contact sync  | `__CONTACT_SYNC__`                                                  |
-
-Hiding Dumb Keys only hides its settings tile; the keyboard keeps working. Its settings are still
-reachable with
-`adb shell am start -n com.offlineinc.dumbtt9/io.github.sspanak.tt9.preferences.PreferencesActivity`.
-
-The same passes also relabel tiles. `RENAME` in `UnhideHook.java` maps a tile ID to the label to
-show instead; it currently renames smart music (`__DUMB_SPOTIFY__`, which is the launcher's
-Spotify client) to `spotify`. The launcher sorts the drawer after this, so a renamed tile lands
-in its new alphabetical spot.
-
-Those class names are obfuscated, and every launcher update renames them (v6.42.0 called them
-`bc.g1` and `bc.j`). So the module doesn't look them up by name. Instead,
-[`DexScanner.java`](lsposed/unhide-apps/src/com/amber/dumbdownunhide/DexScanner.java) reads the
-launcher's own dex files and finds the methods by the string constants they use, which
-obfuscation leaves alone:
-
-- The filter is the static `ArrayList -> ArrayList` method that reads the `has_subscription`,
-  `hide_audio_bundle` and `hide_smart_txt` preferences.
-- The injector is the coroutine body that loads both `__CONTACT_SYNC__` and `__QUACK__`.
-- The cursor check (see Cursor on launch below) is the static `(Context, String) -> boolean`
-  method that loads `com.ubercab.uberlite`, `com.google.android.apps.mapslite` and
-  `com.openbubbles.messaging`.
-
-Each tile's ID and label are read from the fields that its `toString()` prints as `packageName=`
-and `label=`, so no field names are hardcoded either. The scan takes about a second on the phone, so its result is cached in
-the launcher's `cache/dumbdown-unhide.properties` and only redone when the launcher APK changes.
-If a future update changes the strings themselves, the module logs it (see Verify) rather than
-crashing the launcher.
-
-### Cursor on launch
-
-When you open some apps from the launcher (from the drawer, the home grid or a notification), it
-switches the DumbMouse cursor on first, and its accessibility service keeps the cursor on while
-that app is in front. The list is hardcoded and there's no setting for it: Chrome, Chromium, Maps
-Lite, Uber Lite, newer OpenBubbles, and the music apps (Spotify, Apple Music, AntennaPod). One
-static method (`bc.v0.f` in v6.52.0) answers "does this app get the cursor?" for every one of
-those code paths, so the module hooks it and also answers yes for the packages in `MOUSE_APPS`
-in `UnhideHook.java`:
-
-| App          | Package                      |
-| ------------ | ---------------------------- |
-| Aurora Store | `com.aurora.store`           |
-| Immich       | `app.alextran.immich`        |
-| K-9 Mail     | `com.fsck.k9`                |
-| LSPosed      | `org.lsposed.manager`        |
-| Lyft         | `me.lyft.android`            |
-| Magisk       | `com.topjohnwu.magisk`       |
-| My Tello     | `com.tello.ui`               |
-| Pebble       | `coredevices.coreapp`        |
-| Proton Mail  | `ch.protonmail.android`      |
-| Signal       | `org.thoughtcrime.securesms` |
-| Telegram     | `org.telegram.messenger`     |
-
-Adding them to the launcher's music-apps set would have been simpler, but when the audio bundle
-is locked (`hide_audio_bundle`), the launcher also hides the apps in that set from the drawer.
-The cursor only comes on for apps opened through the launcher. Starting one with `adb shell am
-start` or `monkey` skips it.
-
-Nothing in the APK on the phone changes, and the module needs LSPosed, set up as in microG
-support above.
-
-### Build
-
-[`build.sh`](lsposed/unhide-apps/build.sh) uses only the Android SDK (build-tools 36.0.0,
-platform android-36) and a JDK 11+. No Gradle. The Xposed API classes it compiles against are
-small stubs in `stubs/` that are never put in the APK, since LSPosed provides the real ones. It
-signs with your `~/.android/debug.keystore`. A prebuilt `dumbdown-unhide.apk` is committed.
-
-```bash
-lsposed/unhide-apps/build.sh
-```
-
-### Install
-
-```bash
-adb install lsposed/unhide-apps/dumbdown-unhide.apk
-adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
-```
-
-In the manager: **Modules → DumbDown App Visibility → Enable module**, with only **DumbDown
-Launcher** ticked in the scope list. Then restart the launcher (a reboot works too):
-
-```bash
-adb shell am force-stop com.offlineinc.dumbdownlauncher
-```
-
-Magisk and Chrome now show in the app drawer and can be added to the home grid, and the hidden
-tiles are gone from both. To update after editing `UNHIDE`, `HIDE`, `RENAME` or `MOUSE_APPS`,
-rebuild, run `adb install -r` with the new APK, and force-stop the launcher again — LSPosed keeps
-the module enabled and scoped across updates.
-
-Force-stopping the launcher also kills its mouse accessibility service, and Android then lists it
-under "Crashed services" in `adb shell dumpsys accessibility` and won't rebind it, so the cursor
-stops working. Re-enable it (or reboot):
-
-```bash
-adb shell su -c 'settings delete secure enabled_accessibility_services && settings put secure enabled_accessibility_services com.offlineinc.dumbdownlauncher/com.offlineinc.dumbdownlauncher.MouseAccessibilityService && settings put secure accessibility_enabled 1'
-```
-
-### Verify
-
-```bash
-adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep DumbDownUnhide
-```
-
-You want four lines when the launcher starts, and up to three more as you use it:
-
-- `unhid [com.topjohnwu.magisk, ...] in place`
-- `hiding tiles via bc.f1.a`
-- `scrubbing drawer after bc.k.invokeSuspend`
-- `cursor check via bc.v0.f (11 extra apps)`
-- `renamed tile __DUMB_SPOTIFY__ from "smart music" to "spotify"` (logged once per launcher start)
-- `hid tiles [...]` (logged once per launcher start)
-- `cursor on for <package>` (logged once per launcher start, the first time you open one of the
-  `MOUSE_APPS`)
-
-The class names in the `via` and `after` lines change with each launcher build. On the first start after
-a launcher update, there's also `scanned launcher dex in N ms` before them.
-
-Any line containing `not found` or `ambiguous` means a launcher update changed the code that step
-looks for, so its fingerprint in `UnhideHook.java` needs updating. The other steps keep working
-regardless.
-
-### Revert
-
-Disable the module in the LSPosed manager (or `adb uninstall com.amber.dumbdownunhide`) and
-force-stop the launcher again.
-
-</details>
-
-<details>
-<summary><b>TCL Tweaks: Settings and browser in light mode, no "fully charged" notification (LSPosed)</b></summary>
-
-[`lsposed/tcl-tweaks/`](lsposed/tcl-tweaks) holds small fixes for TCL's own system apps. Each fix
-is a separate hook class listed in `assets/xposed_init`, and each one only runs in its own app's
-process.
-
-### Settings in light mode
-
-With Android's dark mode on, TCL's Settings app (`com.android.settings`, from
-`/system/priv-app/TctSettings`) turns its backgrounds dark gray but keeps most of its text black.
-Some of that black comes from resources with no dark-mode version (the row selector
-`drawable/preference_text_color`). The rest is hardcoded: `com.tct.TctPreference` and about 25
-similar row classes call `setTextColor(0xFF000000)` in `onFocusChange`, so even fixed rows go
-black again once you scroll past them. Patching that screen by screen doesn't scale, so this
-module keeps Settings in light mode and leaves dark mode on for everything else.
-
-Android 11 has no per-app dark mode setting, so this is done from inside the app.
-[`LightModeHook.java`](lsposed/tcl-tweaks/src/com/amber/tcltweaks/LightModeHook.java) hooks
-`android.content.res.ResourcesImpl.updateConfiguration`, which every `Resources` object in the
-process goes through when it's created and on each configuration change. When the configuration
-says night mode, the hook passes on a copy that says day instead. Settings then resolves its normal
-light colors, drawables and themes everywhere, including screens nobody has checked. Only the
-Settings process is affected, and no Settings class names are involved, so a Settings update
-doesn't break it.
-
-### Browser in light mode
-
-The browser is a customized Chromium 119 (`org.chromium.chrome`, from `/system/app/Chromium`).
-With dark mode on, its toolbar gets white text on light gray and it darkens web pages. The Settings
-trick doesn't work here: with the Resources hook, part of Chromium still thinks it's dark, its page
-darkening then fails on the phone's PowerVR GPU (`IMGSRV ... DrawElements` errors), and every page
-renders blank. Chromium's own **Settings → Theme → Light** has none of these problems, so
-[`BrowserThemeHook.java`](lsposed/tcl-tweaks/src/com/amber/tcltweaks/BrowserThemeHook.java) sets
-that preference (`ui_theme_setting` = 1) each time the browser starts, before any window opens.
-Setting the theme by hand would also work, but clearing the browser's data resets it.
-
-If pages then draw partly or entirely white (logos, icons, colored boxes, sometimes even text),
-the browser's on-disk GPU shader cache has bad entries, and logcat shows `IMGSRV ...
-DrawElements: ValidateState() failed`. Clearing the cache fixes it, and the browser rebuilds it on
-the next launch:
-
-```bash
-adb shell am force-stop org.chromium.chrome
-adb shell su -c 'cd /data/data/org.chromium.chrome/app_chrome && rm -rf ShaderCache GrShaderCache GraphiteDawnCache Default/GPUCache Default/DawnCache'
-```
-
-### No "Battery is fully charged" notification
-
-Whenever the battery reaches 100% on a charger, SystemUI (`/system/priv-app/JoySystemUI`) posts
-"Battery full / Battery is fully charged." (notification id 3000), plays a chime and vibrates. It
-all happens in `BatteryControllerImpl.showBatteryFullNotification`. No setting turns the
-notification off: `charging_sounds_enabled` only silences the chime. Blocking its channel isn't an
-option either, because that channel (`BAT`) also carries the low-battery, battery saver and
-"non-standard charger" warnings.
-[`BatteryFullHook.java`](lsposed/tcl-tweaks/src/com/amber/tcltweaks/BatteryFullHook.java) skips
-that one method and clears the notification if it's already showing. The other battery warnings
-are unaffected.
-
-### Build
-
-[`build.sh`](lsposed/tcl-tweaks/build.sh) works like the unhide module's: Android SDK only,
-with the Xposed API as compile-only stubs, signed with your debug keystore. A prebuilt
-`tcl-tweaks.apk` is committed.
-
-```bash
-lsposed/tcl-tweaks/build.sh
-```
-
-### Install
-
-```bash
-adb install lsposed/tcl-tweaks/tcl-tweaks.apk
-adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
-```
-
-In the manager: **Modules → TCL Tweaks → Enable module**, with **Settings**
-(`com.android.settings`), **System UI** (`com.android.systemui`) and **Browser**
-(`org.chromium.chrome`) ticked in the scope list. Then restart all three:
-
-```bash
-adb shell am force-stop com.android.settings
-adb shell am force-stop org.chromium.chrome
-adb shell su -c 'kill $(pidof com.android.systemui)'
-```
-
-If you installed the older Settings Light Mode module (`com.amber.settingslight`), uninstall it;
-TCL Tweaks replaces it.
-
-### Verify
-
-```bash
-adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep TclTweaks
-```
-
-You should see `hooked showBatteryFullNotification` when SystemUI starts, and
-`hooked ResourcesImpl.updateConfiguration` plus (with dark mode on) `forced light mode` each time
-Settings starts. Each time the browser starts you should see `hooked browser startup`, followed
-the first time by `set browser theme to light`.
-
-### Revert
-
-Disable the module in the LSPosed manager (or `adb uninstall com.amber.tcltweaks`), then
-force-stop Settings and the browser and restart SystemUI. The browser keeps its Light theme until
-you change it back under **Settings → Theme**. To drop just one fix, untick that app in the
-module's scope list.
-
-</details>
+| App               | Releases                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------ |
+| DumbDown Launcher | [Offline-DC/dumb-down-launcher](https://github.com/Offline-DC/dumb-down-launcher/releases) |
+| DumbTT9 keyboard  | [Offline-DC/dumbtt9](https://github.com/Offline-DC/dumbtt9/releases)                       |
+| Voice to Text     | [Offline-DC/voicetotextapp](https://github.com/Offline-DC/voicetotextapp/releases)         |

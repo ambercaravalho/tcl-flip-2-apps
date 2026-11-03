@@ -1,0 +1,6 @@
+id=google_webview_provider
+name=Google WebView Provider
+version=v1.0.0
+versionCode=1
+author=amber
+description=Lets Google's Android System WebView (com.google.android.webview, installed and updated from Aurora Store) replace the TCL Flip 2's stock WebView 83. Adds it, with Google's signing certificate, to the system's list of allowed WebView providers through a static framework overlay. The stock com.android.webview stays listed as the fallback. Nothing on /system is modified; removing the module reverts to the stock WebView.

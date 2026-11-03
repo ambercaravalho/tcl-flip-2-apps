@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.amber.webviewproviders">
+
+    <!-- targetSdk is kept below 29 (see build.sh): Android only lets a preinstalled
+         overlay that targets an older SDK replace framework resources that aren't
+         declared overlayable, which config_webview_packages isn't. -->
+    <overlay
+        android:targetPackage="android"
+        android:isStatic="true"
+        android:priority="1" />
+
+    <application android:hasCode="false" />
+</manifest>
