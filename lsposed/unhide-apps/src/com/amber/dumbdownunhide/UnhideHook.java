@@ -1,5 +1,6 @@
 package com.amber.dumbdownunhide;
 
+import android.content.Context;
 import android.content.pm.ApplicationInfo;
 
 import java.io.File;
@@ -44,7 +45,14 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * the home grid reads, so both are scrubbed after it runs. The same passes
  * relabel the tiles in RENAME.
  *
- * Both of those are obfuscated and renamed by every launcher build, so they are
+ * Cursor: one static check decides which apps get the DumbMouse cursor when
+ * they're launched or come to the front. It hardcodes the browsers, Maps Lite,
+ * Uber Lite and OpenBubbles, plus the music-bundle Set on
+ * MouseAccessibilityService. That Set also hides its apps from the drawer when
+ * the audio bundle is locked, so instead of adding to it, the check's result is
+ * overridden for MOUSE_APPS.
+ *
+ * All three are obfuscated and renamed by every launcher build, so they are
  * found by the string constants they load (see {@link DexScanner}) and the result
  * is cached until the launcher APK changes.
  */
@@ -71,6 +79,20 @@ public class UnhideHook implements IXposedHookLoadPackage {
     static {
         RENAME.put("__DUMB_SPOTIFY__", "spotify");                // smart music
     }
+
+    /** Extra packages that turn the cursor on when launched, like the browser does. */
+    private static final Set<String> MOUSE_APPS = new HashSet<>(Arrays.asList(
+        "com.aurora.store",
+        "app.alextran.immich",
+        "com.fsck.k9",                                            // K-9 Mail
+        "org.lsposed.manager",
+        "me.lyft.android",
+        "com.topjohnwu.magisk",
+        "com.tello.ui",                                           // My Tello
+        "coredevices.coreapp",                                    // Pebble
+        "ch.protonmail.android",
+        "org.thoughtcrime.securesms",                             // Signal
+        "org.telegram.messenger"));
 
     private static final String LAUNCHER = "com.offlineinc.dumbdownlauncher";
     private static final String ALL_APPS_ACTIVITY = LAUNCHER + ".AllAppsActivity";
@@ -102,10 +124,21 @@ public class UnhideHook implements IXposedHookLoadPackage {
         }
     };
 
-    private static final Fingerprint[] FINGERPRINTS = {TILE_FILTER, TILE_INJECTOR};
+    /** The cursor check: {@code static boolean f(Context context, String pkg)}. */
+    private static final Fingerprint MOUSE_CHECK = new Fingerprint("mouse", "cursor check",
+            "com.ubercab.uberlite", "com.google.android.apps.mapslite", "com.openbubbles.messaging") {
+        @Override
+        boolean matches(Method m) {
+            Class<?>[] params = m.getParameterTypes();
+            return Modifier.isStatic(m.getModifiers()) && m.getReturnType() == boolean.class
+                && params.length == 2 && params[0] == Context.class && params[1] == String.class;
+        }
+    };
+
+    private static final Fingerprint[] FINGERPRINTS = {TILE_FILTER, TILE_INJECTOR, MOUSE_CHECK};
 
     // Bump when a fingerprint changes, so results cached by an older module build are dropped.
-    private static final int CACHE_VERSION = 1;
+    private static final int CACHE_VERSION = 2;
     private static final String CACHE_FILE = "cache/dumbdown-unhide.properties";
     private static final String CACHE_NONE = "-";
 
@@ -115,6 +148,7 @@ public class UnhideHook implements IXposedHookLoadPackage {
 
     private static final String TAG = "DumbDownUnhide: ";
 
+    private static final AtomicBoolean loggedFirstMouse = new AtomicBoolean();
     private static final AtomicBoolean loggedFirstHide = new AtomicBoolean();
     private static final AtomicBoolean loggedFirstRename = new AtomicBoolean();
     private static final Map<Class<?>, TileFields> tileFields = new ConcurrentHashMap<>();
@@ -147,6 +181,11 @@ public class UnhideHook implements IXposedHookLoadPackage {
             hookTileInjector(cl, methods.get(TILE_INJECTOR));
         } catch (Throwable t) {
             XposedBridge.log(TAG + "drawer scrub hook failed: " + t);
+        }
+        try {
+            hookMouseCheck(methods.get(MOUSE_CHECK));
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + "cursor check hook failed: " + t);
         }
     }
 
@@ -367,6 +406,27 @@ public class UnhideHook implements IXposedHookLoadPackage {
         });
         XposedBridge.log(TAG + "hiding tiles via " + target.getDeclaringClass().getName()
             + "." + target.getName());
+    }
+
+    private static void hookMouseCheck(Method target) {
+        if (target == null) {
+            return;
+        }
+        XposedBridge.hookMethod(target, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object pkg = param.args[1];
+                if (Boolean.TRUE.equals(param.getResult()) || !MOUSE_APPS.contains(pkg)) {
+                    return;
+                }
+                param.setResult(true);
+                if (loggedFirstMouse.compareAndSet(false, true)) {
+                    XposedBridge.log(TAG + "cursor on for " + pkg);
+                }
+            }
+        });
+        XposedBridge.log(TAG + "cursor check via " + target.getDeclaringClass().getName()
+            + "." + target.getName() + " (" + MOUSE_APPS.size() + " extra apps)");
     }
 
     private static void hookTileInjector(ClassLoader cl, Method target) throws Exception {

@@ -9,7 +9,7 @@ this repo but is fiddly enough to be worth writing down.
 | ------------------------ | ------------------------------------------------------------------- |
 | `magisk/launcher/`       | Unlocks tiles, skips the activation screen, keeps the browser on.   |
 | `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
-| `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
+| `lsposed/unhide-apps/`   | Launcher: shows Magisk and Chrome, hides tiles, more cursor apps.   |
 | `lsposed/tcl-tweaks/`    | Settings and browser stay light; hides the "fully charged" notice.  |
 
 <details>
@@ -332,7 +332,7 @@ exactly.
 </details>
 
 <details>
-<summary><b>Show and hide launcher apps (LSPosed)</b></summary>
+<summary><b>Show and hide launcher apps, cursor on launch (LSPosed)</b></summary>
 
 ### Unhiding denylisted apps
 
@@ -395,12 +395,44 @@ obfuscation leaves alone:
 - The filter is the static `ArrayList -> ArrayList` method that reads the `has_subscription`,
   `hide_audio_bundle` and `hide_smart_txt` preferences.
 - The injector is the coroutine body that loads both `__CONTACT_SYNC__` and `__QUACK__`.
+- The cursor check (see Cursor on launch below) is the static `(Context, String) -> boolean`
+  method that loads `com.ubercab.uberlite`, `com.google.android.apps.mapslite` and
+  `com.openbubbles.messaging`.
 
 Each tile's ID and label are read from the fields that its `toString()` prints as `packageName=`
 and `label=`, so no field names are hardcoded either. The scan takes about a second on the phone, so its result is cached in
 the launcher's `cache/dumbdown-unhide.properties` and only redone when the launcher APK changes.
 If a future update changes the strings themselves, the module logs it (see Verify) rather than
 crashing the launcher.
+
+### Cursor on launch
+
+When you open some apps from the launcher (from the drawer, the home grid or a notification), it
+switches the DumbMouse cursor on first, and its accessibility service keeps the cursor on while
+that app is in front. The list is hardcoded and there's no setting for it: Chrome, Chromium, Maps
+Lite, Uber Lite, newer OpenBubbles, and the music apps (Spotify, Apple Music, AntennaPod). One
+static method (`bc.v0.f` in v6.52.0) answers "does this app get the cursor?" for every one of
+those code paths, so the module hooks it and also answers yes for the packages in `MOUSE_APPS`
+in `UnhideHook.java`:
+
+| App          | Package                      |
+| ------------ | ---------------------------- |
+| Aurora Store | `com.aurora.store`           |
+| Immich       | `app.alextran.immich`        |
+| K-9 Mail     | `com.fsck.k9`                |
+| LSPosed      | `org.lsposed.manager`        |
+| Lyft         | `me.lyft.android`            |
+| Magisk       | `com.topjohnwu.magisk`       |
+| My Tello     | `com.tello.ui`               |
+| Pebble       | `coredevices.coreapp`        |
+| Proton Mail  | `ch.protonmail.android`      |
+| Signal       | `org.thoughtcrime.securesms` |
+| Telegram     | `org.telegram.messenger`     |
+
+Adding them to the launcher's music-apps set would have been simpler, but when the audio bundle
+is locked (`hide_audio_bundle`), the launcher also hides the apps in that set from the drawer.
+The cursor only comes on for apps opened through the launcher. Starting one with `adb shell am
+start` or `monkey` skips it.
 
 Nothing in the APK on the phone changes, and the module needs LSPosed, set up as in microG
 support above.
@@ -431,9 +463,17 @@ adb shell am force-stop com.offlineinc.dumbdownlauncher
 ```
 
 Magisk and Chrome now show in the app drawer and can be added to the home grid, and the hidden
-tiles are gone from both. To update after editing `UNHIDE`, `HIDE` or `RENAME`, rebuild, run
-`adb install -r` with the new APK, and force-stop the launcher again — LSPosed keeps the module
-enabled and scoped across updates.
+tiles are gone from both. To update after editing `UNHIDE`, `HIDE`, `RENAME` or `MOUSE_APPS`,
+rebuild, run `adb install -r` with the new APK, and force-stop the launcher again — LSPosed keeps
+the module enabled and scoped across updates.
+
+Force-stopping the launcher also kills its mouse accessibility service, and Android then lists it
+under "Crashed services" in `adb shell dumpsys accessibility` and won't rebind it, so the cursor
+stops working. Re-enable it (or reboot):
+
+```bash
+adb shell su -c 'settings delete secure enabled_accessibility_services && settings put secure enabled_accessibility_services com.offlineinc.dumbdownlauncher/com.offlineinc.dumbdownlauncher.MouseAccessibilityService && settings put secure accessibility_enabled 1'
+```
 
 ### Verify
 
@@ -441,15 +481,18 @@ enabled and scoped across updates.
 adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep DumbDownUnhide
 ```
 
-You want three lines when the launcher starts, and two more once the tile lists have been built:
+You want four lines when the launcher starts, and up to three more as you use it:
 
 - `unhid [com.topjohnwu.magisk, ...] in place`
 - `hiding tiles via bc.f1.a`
 - `scrubbing drawer after bc.k.invokeSuspend`
+- `cursor check via bc.v0.f (11 extra apps)`
 - `renamed tile __DUMB_SPOTIFY__ from "smart music" to "spotify"` (logged once per launcher start)
 - `hid tiles [...]` (logged once per launcher start)
+- `cursor on for <package>` (logged once per launcher start, the first time you open one of the
+  `MOUSE_APPS`)
 
-The class names in the middle two lines change with each launcher build. On the first start after
+The class names in the `via` and `after` lines change with each launcher build. On the first start after
 a launcher update, there's also `scanned launcher dex in N ms` before them.
 
 Any line containing `not found` or `ambiguous` means a launcher update changed the code that step

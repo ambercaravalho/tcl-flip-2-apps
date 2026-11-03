@@ -14,7 +14,7 @@
             android:value="82" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Unhides Magisk and Chrome in DumbDown Launcher by removing them from its hardcoded app denylist, and hides tiles you don't use: dumb keys, 2-factor auth, device setup, quack, rideshare, signal, smart cal, free up space, smart txt and contact sync. Also renames smart music to spotify." />
+            android:value="Unhides Magisk and Chrome in DumbDown Launcher by removing them from its hardcoded app denylist, and hides tiles you don't use: dumb keys, 2-factor auth, device setup, rideshare, signal, smart cal, free up space, smart txt and contact sync. Also renames smart music to spotify, and turns the cursor on when launching Aurora Store, Immich, K-9 Mail, LSPosed, Lyft, Magisk, My Tello, Pebble, Proton Mail, Signal and Telegram, like it does for the browser." />
         <meta-data
             android:name="xposedscope"
             android:value="com.offlineinc.dumbdownlauncher" />
