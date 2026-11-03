@@ -10,7 +10,7 @@ this repo but is fiddly enough to be worth writing down.
 | `magisk/launcher/`       | Unlocks tiles, skips the activation screen, keeps the browser on.   |
 | `magisk/lsposed-notif/`  | Silences LSPosed's persistent "LSPosed loaded" status notification. |
 | `lsposed/unhide-apps/`   | Shows Magisk and Chrome in the launcher, and hides unused tiles.    |
-| `lsposed/tcl-tweaks/`    | Keeps Settings in light mode, hides the "fully charged" notice.     |
+| `lsposed/tcl-tweaks/`    | Settings and browser stay light; hides the "fully charged" notice.  |
 
 <details>
 <summary><b>The phone</b></summary>
@@ -464,7 +464,7 @@ force-stop the launcher again.
 </details>
 
 <details>
-<summary><b>TCL Tweaks: Settings in light mode, no "fully charged" notification (LSPosed)</b></summary>
+<summary><b>TCL Tweaks: Settings and browser in light mode, no "fully charged" notification (LSPosed)</b></summary>
 
 [`lsposed/tcl-tweaks/`](lsposed/tcl-tweaks) holds small fixes for TCL's own system apps. Each fix
 is a separate hook class listed in `assets/xposed_init`, and each one only runs in its own app's
@@ -488,6 +488,27 @@ says night mode, the hook passes on a copy that says day instead. Settings then 
 light colors, drawables and themes everywhere, including screens nobody has checked. Only the
 Settings process is affected, and no Settings class names are involved, so a Settings update
 doesn't break it.
+
+### Browser in light mode
+
+The browser is a customized Chromium 119 (`org.chromium.chrome`, from `/system/app/Chromium`).
+With dark mode on, its toolbar gets white text on light gray and it darkens web pages. The Settings
+trick doesn't work here: with the Resources hook, part of Chromium still thinks it's dark, its page
+darkening then fails on the phone's PowerVR GPU (`IMGSRV ... DrawElements` errors), and every page
+renders blank. Chromium's own **Settings → Theme → Light** has none of these problems, so
+[`BrowserThemeHook.java`](lsposed/tcl-tweaks/src/com/amber/tcltweaks/BrowserThemeHook.java) sets
+that preference (`ui_theme_setting` = 1) each time the browser starts, before any window opens.
+Setting the theme by hand would also work, but clearing the browser's data resets it.
+
+If pages then draw partly or entirely white (logos, icons, colored boxes, sometimes even text),
+the browser's on-disk GPU shader cache has bad entries, and logcat shows `IMGSRV ...
+DrawElements: ValidateState() failed`. Clearing the cache fixes it, and the browser rebuilds it on
+the next launch:
+
+```bash
+adb shell am force-stop org.chromium.chrome
+adb shell su -c 'cd /data/data/org.chromium.chrome/app_chrome && rm -rf ShaderCache GrShaderCache GraphiteDawnCache Default/GPUCache Default/DawnCache'
+```
 
 ### No "Battery is fully charged" notification
 
@@ -519,11 +540,12 @@ adb shell am start -n org.lsposed.manager/.ui.activity.MainActivity
 ```
 
 In the manager: **Modules → TCL Tweaks → Enable module**, with **Settings**
-(`com.android.settings`) and **System UI** (`com.android.systemui`) ticked in the scope list. Then
-restart both:
+(`com.android.settings`), **System UI** (`com.android.systemui`) and **Browser**
+(`org.chromium.chrome`) ticked in the scope list. Then restart all three:
 
 ```bash
 adb shell am force-stop com.android.settings
+adb shell am force-stop org.chromium.chrome
 adb shell su -c 'kill $(pidof com.android.systemui)'
 ```
 
@@ -538,12 +560,14 @@ adb shell su -c 'cat /data/adb/lspd/log/modules_*.log' | grep TclTweaks
 
 You should see `hooked showBatteryFullNotification` when SystemUI starts, and
 `hooked ResourcesImpl.updateConfiguration` plus (with dark mode on) `forced light mode` each time
-Settings starts.
+Settings starts. Each time the browser starts you should see `hooked browser startup`, followed
+the first time by `set browser theme to light`.
 
 ### Revert
 
 Disable the module in the LSPosed manager (or `adb uninstall com.amber.tcltweaks`), then
-force-stop Settings and restart SystemUI. To keep just one fix, untick the other app in the
+force-stop Settings and the browser and restart SystemUI. The browser keeps its Light theme until
+you change it back under **Settings → Theme**. To drop just one fix, untick that app in the
 module's scope list.
 
 </details>
